@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Ironcrown — Kingdom Strategy</title>
+  <meta name="description" content="Build a kingdom, train armies, recruit generals and conquer rival realms. Runs in your browser." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👑</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ===== Top HUD ===== -->
+    <header id="hud">
+      <div class="brand"><span class="crown">👑</span><div><b id="kingdom-name">Ironcrown</b><small id="hall-label">Main Hall 1</small></div></div>
+      <div id="resources" class="resources"></div>
+      <div class="hud-stats">
+        <span class="chip" title="Builders busy / total">🔨 <b id="builders">0/2</b></span>
+        <span class="chip" title="Army housing used / capacity">🛡️ <b id="army-cap">0/25</b></span>
+        <span class="chip" title="Total kingdom power">⚡ <b id="power">0</b></span>
+        <span class="chip" id="shield-chip" hidden title="Peace shield active">🕊️ <b id="shield-time"></b></span>
+        <span class="chip sync" id="sync" title="Save status">💾 <b id="sync-label">local</b></span>
+        <button class="icon-btn" data-action="menu" title="Menu">☰</button>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ===== Canvas stage (Kingdom / World) ===== -->
+      <section id="stage-wrap">
+        <div class="view-toggle" role="tablist">
+          <button class="active" data-view="kingdom" role="tab">🏰 Kingdom</button>
+          <button data-view="world" role="tab">🗺️ World</button>
+        </div>
+        <div id="placing-hint" hidden></div>
+        <canvas id="stage" aria-label="Game map"></canvas>
+        <div id="tooltip" hidden></div>
+      </section>
+
+      <!-- ===== Side panel ===== -->
+      <aside id="panel">
+        <nav class="tabs" role="tablist">
+          <button data-tab="info" class="active">🏗️<span>Build</span></button>
+          <button data-tab="army">⚔️<span>Army</span></button>
+          <button data-tab="generals">🎖️<span>Generals</span></button>
+          <button data-tab="shop">🎁<span>Shop</span></button>
+          <button data-tab="alliance">🤝<span>Alliance</span></button>
+          <button data-tab="log">📜<span>Log</span><i id="log-dot" hidden></i></button>
+        </nav>
+        <div id="panel-body"></div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- ===== Modals ===== -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" id="modal-card"></div>
+  </div>
+
+  <div id="battle" class="modal" hidden>
+    <div class="battle-card">
+      <div class="battle-head">
+        <div id="battle-title">Battle</div>
+        <div class="battle-controls">
+          <button data-bspeed="1" class="active">1×</button>
+          <button data-bspeed="2">2×</button>
+          <button data-bspeed="4">4×</button>
+          <button id="battle-skip">Skip ⏭</button>
+        </div>
+      </div>
+      <canvas id="battle-canvas" width="960" height="520"></canvas>
+      <div id="battle-result" hidden></div>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+  <script src="game.js"></script>
+</body>
+</html>
