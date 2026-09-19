@@ -78,32 +78,7 @@ function coastPath(g, grid, i, isLand, grow, seed) {
   }
 }
 const DEPTH_COLORS = ['#58b3cf', '#4aa0c4', '#3a88b3', '#2f73a0', '#27628f', '#20557f', '#1c4a70'];
-// Draws water depth bands, foam, sand and land for the given visible hexes.
-function drawTerrainBase(g, grid, vis, isLand, depth, landColor, seed, t) {
-  const s = grid.size;
-  // water: deepest first, soft circles so the bands curve naturally
-  for (let d = 6; d >= 1; d--) {
-    g.fillStyle = DEPTH_COLORS[d - 1];
-    g.beginPath();
-    for (const i of vis) if (!isLand(i) && Math.min(depth[i], 6) === d) { g.moveTo(grid.cx[i] + s * 1.25, grid.cy[i]); g.arc(grid.cx[i], grid.cy[i], s * 1.25, 0, Math.PI * 2); }
-    g.fill();
-  }
-  const coast = vis.filter((i) => isLand(i) && grid.neighbors(i).some((n) => !isLand(n)));
-  const coastSet = new Set(coast);
-  // animated foam + wet sand + dry sand
-  g.fillStyle = `rgba(235,248,252,${0.45 + 0.15 * Math.sin(t * 1.3)})`;
-  g.beginPath(); for (const i of coast) coastPath(g, grid, i, isLand, 0.4 + 0.04 * Math.sin(t * 1.3 + i), seed); g.fill();
-  g.fillStyle = '#c9b27a'; g.beginPath(); for (const i of coast) coastPath(g, grid, i, isLand, 0.28, seed); g.fill();
-  g.fillStyle = '#e2cf98'; g.beginPath(); for (const i of coast) coastPath(g, grid, i, isLand, 0.16, seed); g.fill();
-  // land
-  for (const i of vis) {
-    if (!isLand(i)) continue;
-    g.fillStyle = landColor(i);
-    g.beginPath();
-    if (coastSet.has(i)) coastPath(g, grid, i, isLand, -0.04, seed); else grid.hexPath(g, i, 1.015);
-    g.fill();
-  }
-}
+// drawTerrainBase lives in gfx.js (quality-aware).
 
 /* ---------- primitives ---------- */
 function box(g, x, y, w, d, h, top, front) { g.fillStyle = front; g.fillRect(x, y + d - h, w, h); g.fillStyle = top; g.fillRect(x, y - h, w, d); }

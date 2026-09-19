@@ -137,7 +137,7 @@ function drawWorld(g, t, dt) {
   g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH);
   cam.apply(g);
   const vis = cam.visible(1), isLandW = (i) => terrain[i] !== T.WATER;
-  drawTerrainBase(g, WG, vis, isLandW, WDEPTH, worldLandColor, S.seed + 1, t);
+  drawTerrainBase(g, WG, vis, isLandW, WDEPTH, worldLandColor, S.seed + 1, t, (i) => WORLD_TEX[terrain[i]], worldShade);
   // water shimmer
   if (z * W_HEX > 10) {
     g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 1.2;
@@ -170,6 +170,8 @@ function drawWorld(g, t, dt) {
     if (detail && isLandW(i)) drawTerrainDetail(g, i, t);
     const f = feat[i];
     if (f && isSeen(i)) drawFeature(g, i, f, t);
+    const tb = S.world.bld[i];
+    if (tb && isSeen(i)) drawTerritoryBuilding(g, i, tb, t);
   }
   const cap = S.world.capital;
   drawCastle(g, WG.cx[cap], WG.cy[cap], 36, '#f2c14e', true);
@@ -185,14 +187,22 @@ function drawWorld(g, t, dt) {
     g.beginPath(); g.arc(WG.cx[last], WG.cy[last], 8, 0, 7); g.stroke();
   };
   for (const e of S.divisions.concat(S.fleets)) pathLine(e, e === selE ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)', [6, 6]);
+  for (const p of S.scouts) pathLine(p, p === selE ? 'rgba(127,212,255,.95)' : 'rgba(127,212,255,.4)', [3, 5]);
+  // guard rings: idle divisions protect their hex and its neighbours
+  for (const d of S.divisions) if (!d.path.length && d.at !== S.world.capital) { g.strokeStyle = 'rgba(242,193,78,.28)'; g.lineWidth = 2; g.setLineDash([3, 4]); g.beginPath(); g.arc(WG.cx[d.at], WG.cy[d.at], W_HEX * 1.9, 0, 7); g.stroke(); g.setLineDash([]); }
   for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) pathLine(a, 'rgba(229,83,75,.8)', [4, 6]);
-  // scout missions
-  for (const m of S.missions) {
-    const p = 1 - m.left / m.total, x = lerp(WG.cx[cap], WG.cx[m.hex], p), y = lerp(WG.cy[cap], WG.cy[m.hex], p);
-    g.strokeStyle = 'rgba(160,210,255,.6)'; g.lineWidth = 1.5; g.setLineDash([3, 5]);
-    g.beginPath(); g.moveTo(WG.cx[cap], WG.cy[cap]); g.lineTo(WG.cx[m.hex], WG.cy[m.hex]); g.stroke(); g.setLineDash([]);
-    g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 5 + Math.sin(t * 8), 0, 7); g.fill();
-    g.fillStyle = '#4ea1f2'; g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill();
+  for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3; g.beginPath(); WG.hexPath(g, a.targetHex, 0.85); g.stroke(); }
+  // scout parties
+  for (const p of S.scouts) {
+    const [x, y] = entPos(p), sel = selE === p;
+    if (sel) { g.strokeStyle = '#7fd4ff'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 4, 13 + Math.sin(t * 5), 0, 7); g.stroke(); }
+    shadow(g, x, y + 5, 7, 2.5);
+    const bob = p.path.length ? Math.abs(Math.sin(t * 10)) * 1.5 : 0;
+    g.fillStyle = '#3f6fb5'; g.fillRect(x - 3, y - 9 - bob, 6, 8);
+    g.fillStyle = '#f1c9a5'; g.beginPath(); g.arc(x, y - 11 - bob, 2.6, 0, 7); g.fill();
+    g.strokeStyle = '#c9a44a'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x + 2, y - 11 - bob); g.lineTo(x + 8, y - 13 - bob); g.stroke();
+    g.fillStyle = 'rgba(12,14,20,.85)'; g.fillRect(x - 10, y + 5, 20, 11);
+    g.fillStyle = '#7fd4ff'; g.font = 'bold 8px sans-serif'; g.textAlign = 'center'; g.fillText(`🔭${p.n}`, x, y + 13); g.textAlign = 'left';
   }
   // AI forces (only where you can see them)
   for (const a of S.aiArmies) {
@@ -216,16 +226,19 @@ function drawWorld(g, t, dt) {
     g.fillStyle = '#f2c14e'; g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.fillText(`⚓${shipCount(f.ships)}`, x, y + 17); g.textAlign = 'left';
   }
   for (const d of S.divisions) {
+    if (d.status === 'fighting') continue;
     const [x, y] = entPos(d);
     const off = d.at === cap && !d.path.length ? (S.divisions.indexOf(d) - (S.divisions.length - 1) / 2) * 16 : 0;
     const water = isWater(d.at);
     if (water) drawShip(g, x + off, y, 'cog', d.color, 1, t, false, false, 0.8);
     drawBanner(g, x + off, y - (water ? 10 : 0), d.color, '', armyHousing(d.units), t, d === selE, false);
   }
+  drawCloudShadows(g, WG, t);
+  Battles.draw(g, t);
   // fog
   g.drawImage(fogLayer(), -20 / FOG_SCALE, -20 / FOG_SCALE, fogCache.width / FOG_SCALE, fogCache.height / FOG_SCALE);
   // labels (on top of fog so known names stay readable)
-  const fs = clamp(12 / z, 9, 40);
+  const fs = clamp(12 / z, 5, 40);
   g.font = `bold ${fs}px sans-serif`; g.textAlign = 'center';
   const label = (text, x, y, c) => { const w = g.measureText(text).width + 10; g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - w / 2, y - fs, w, fs * 1.35); g.fillStyle = c; g.fillText(text, x, y); };
   label(S.name, WG.cx[cap], WG.cy[cap] + 34, '#f2c14e');
@@ -235,6 +248,7 @@ function drawWorld(g, t, dt) {
   if (UI.worldSel >= 0) { g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 0.92); g.stroke(); g.strokeStyle = '#f2c14e'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 1.05); g.stroke(); }
   if (UI.hover >= 0) { g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.hover, 0.95); g.stroke(); }
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawAtmosphere(g);
   drawMinimap(t);
 }
 
@@ -277,5 +291,43 @@ function drawMinimap() {
 function selectedEntity() {
   const s = UI.selEntity;
   if (!s) return null;
-  return (s.kind === 'division' ? S.divisions : S.fleets).find((e) => e.id === s.id) || null;
+  return (s.kind === 'division' ? S.divisions : s.kind === 'scout' ? S.scouts : S.fleets).find((e) => e.id === s.id) || null;
+}
+function drawTerritoryBuilding(g, i, b, t) {
+  const x = WG.cx[i], y = WG.cy[i] + 4, lv = b.level;
+  if (b.level === 0 || b.build > 0) {
+    g.strokeStyle = '#c39a62'; g.lineWidth = 1.5; g.beginPath();
+    for (const dx of [-8, 0, 8]) { g.moveTo(x + dx, y + 6); g.lineTo(x + dx, y - 10); }
+    g.moveTo(x - 10, y - 4); g.lineTo(x + 10, y - 4); g.stroke();
+    g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(x - 12, y - 16, 24, 4); g.fillStyle = '#f2c14e'; g.fillRect(x - 12, y - 16, 24 * (1 - b.build / b.total), 4);
+    if (b.level === 0) return;
+  }
+  switch (b.type) {
+    case 'farmstead':
+      for (let r = 0; r < 3; r++) { g.fillStyle = r % 2 ? '#c9b24a' : '#8fbf4a'; g.fillRect(x - 13, y - 6 + r * 4, 16, 3); }
+      g.fillStyle = '#b5452f'; g.fillRect(x + 5, y - 6, 8, 7); g.fillStyle = '#6d3a2a'; g.beginPath(); g.moveTo(x + 4, y - 6); g.lineTo(x + 9, y - 11); g.lineTo(x + 14, y - 6); g.fill(); break;
+    case 'lumbercamp':
+      g.fillStyle = '#8b5a2b'; for (let k = 0; k < 3; k++) g.fillRect(x - 12, y - 2 + k * 3, 12, 2.5);
+      g.fillStyle = '#a0703f'; g.fillRect(x + 1, y - 7, 11, 8); g.fillStyle = '#6d3a2a'; g.beginPath(); g.moveTo(x, y - 7); g.lineTo(x + 6.5, y - 12); g.lineTo(x + 13, y - 7); g.fill(); break;
+    case 'mine':
+      g.fillStyle = '#7d756a'; g.beginPath(); g.ellipse(x, y, 13, 10, 0, Math.PI, 0); g.fill();
+      g.fillStyle = '#17120e'; g.beginPath(); g.ellipse(x, y, 5, 7, 0, Math.PI, 0); g.fill();
+      g.fillStyle = '#7a5a36'; g.fillRect(x - 6, y - 8, 12, 2); break;
+    case 'village':
+      for (const [dx, dy, c] of [[-8, 0, '#b5452f'], [4, -3, '#3f6fb5'], [-1, 5, '#8a3322']]) { g.fillStyle = '#d8c7a4'; g.fillRect(x + dx - 4, y + dy - 4, 8, 6); g.fillStyle = c; g.beginPath(); g.moveTo(x + dx - 5, y + dy - 4); g.lineTo(x + dx, y + dy - 9); g.lineTo(x + dx + 5, y + dy - 4); g.fill(); }
+      break;
+    case 'watchtower':
+      g.fillStyle = '#8f949d'; g.fillRect(x - 4, y - 18, 8, 22); g.fillStyle = '#b8bcc4'; g.fillRect(x - 6, y - 21, 12, 4);
+      g.fillStyle = '#f2c14e'; g.fillRect(x - 0.5, y - 29, 1.5, 8); g.fillRect(x + 1, y - 29, 6, 3.5); break;
+    case 'fortress':
+      g.fillStyle = '#9ca1ab'; g.fillRect(x - 13, y - 9, 26, 14);
+      g.fillStyle = '#b8bcc4'; for (let k = 0; k < 5; k++) g.fillRect(x - 13 + k * 6, y - 12, 3.5, 3);
+      g.fillRect(x - 15, y - 16, 7, 21); g.fillRect(x + 8, y - 16, 7, 21);
+      g.fillStyle = '#4a3522'; g.fillRect(x - 3, y - 2, 6, 7);
+      g.fillStyle = '#f2c14e'; g.fillRect(x - 12, y - 24, 1.5, 8); g.fillRect(x - 10.5, y - 24, 6, 3.5); break;
+    case 'dock':
+      g.fillStyle = '#7b5230'; g.fillRect(x - 12, y - 2, 24, 6); g.fillStyle = '#a0703f'; for (let k = 0; k < 5; k++) g.fillRect(x - 11 + k * 5, y - 2, 3.5, 6);
+      g.fillStyle = '#5b3d22'; g.fillRect(x - 10, y + 4, 2, 4); g.fillRect(x + 8, y + 4, 2, 4); break;
+  }
+  if (lv > 1) { g.fillStyle = '#f2c14e'; g.font = 'bold 8px sans-serif'; g.fillText('★'.repeat(lv - 1), x + 8, y + 10); }
 }

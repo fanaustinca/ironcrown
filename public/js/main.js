@@ -13,12 +13,12 @@ function frame(now) {
   dt = Math.min(dt, 0.25);
   let sim = dt * UI.gameSpeed;
   while (sim > 0) { const d = Math.min(1, sim); step(d); sim -= d; }
-  if (Battle.b) Battle.frame(dt);
+  Battles.frame(dt);
   inputFrame(dt);
   const t = now / 1000;
   if (UI.view === 'kingdom') drawKingdom(ctx, t, dt); else drawWorld(ctx, t, dt);
   hudTimer -= dt; panelTimer -= dt; saveTimer -= dt;
-  if (hudTimer <= 0) { updateHud(); hudTimer = 0.1; }
+  if (hudTimer <= 0) { updateHud(); renderBattleHud(); hudTimer = 0.15; }
   if (panelTimer <= 0 || (UI.panelDirty && panelTimer < 0.75)) { renderPanel(); panelTimer = 1; }
   if (saveTimer <= 0) { save(); saveTimer = 15; }
   requestAnimationFrame(frame);
@@ -53,9 +53,9 @@ async function boot() {
 
 /* ---------- test hooks (used by tests/e2e.mjs) ---------- */
 window.ironcrown = {
-  get state() { return S; }, UI, SETTINGS, CAM, Battle, BUILDINGS, UNITS, SHIPS, GENERALS, RESEARCH, version: GAME_VERSION,
-  api: { placeBuilding, upgradeBuilding, trainUnits, buildShips, openBox, sendScouts, claimTile, createAlliance, joinAlliance, donate, useItem,
-    createDivision, createFleet, giveOrder, startResearch, assignGeneral, save, load, selectEntity },
+  get state() { return S; }, UI, SETTINGS, CAM, Battles, BUILDINGS, UNITS, SHIPS, GENERALS, RESEARCH, version: GAME_VERSION,
+  api: { placeBuilding, upgradeBuilding, trainUnits, buildShips, openBox, claimTile, createAlliance, joinAlliance, donate, useItem,
+    createDivision, createFleet, giveOrder, startResearch, assignGeneral, save, load, selectEntity, dispatchScouts, buildTerritory, hireGeneral, launchRaid, promoteGeneral },
   debug: {
     fastForward(sec) { let t = sec; while (t > 0) { const d = Math.min(1, t); step(d, true); t -= d; } UI.panelDirty = true; renderPanel(true); updateHud(); },
     give(res) { for (const [k, v] of Object.entries(res)) S.res[k] += v; UI.panelDirty = true; updateHud(); },
@@ -80,9 +80,9 @@ const cheats = {
       'cheats.gold(n)': 'Add gold (default 100k)', 'cheats.res(n)': 'Add n of every resource', 'cheats.max()': 'Fill all storage to the cap',
       'cheats.hall(lvl)': 'Set Main Hall level (1-6)', 'cheats.build()': 'Finish all construction', 'cheats.research()': 'Finish research in progress',
       'cheats.researchAll()': 'Max every technology', 'cheats.army(n)': 'Add n of every unit to the garrison', 'cheats.ships(n)': 'Add n of every ship to the harbour',
-      'cheats.generals()': 'Unlock every general (5★)', 'cheats.items(n)': 'Add n of every item', 'cheats.reveal()': 'Reveal the whole map',
+      'cheats.generals(n)': 'Get n copies of every general (5★)', 'cheats.items(n)': 'Add n of every item', 'cheats.reveal()': 'Reveal the whole map',
       'cheats.time(sec)': 'Fast-forward the simulation', 'cheats.speed(x)': 'Game speed multiplier (1 = normal)', 'cheats.season(0-3)': 'Jump to spring/summer/autumn/winter',
-      'cheats.raid(kid)': 'Trigger a raid now', 'cheats.pirates()': 'Spawn a pirate fleet', 'cheats.peace()': 'Everyone loves you, wars end',
+      'cheats.raid(kid)': 'Trigger a raid now', 'cheats.seamen(n)': 'Add n seamen (ship crews)', 'cheats.pirates()': 'Spawn a pirate fleet', 'cheats.peace()': 'Everyone loves you, wars end',
       'cheats.war(kid)': 'Declare war on kingdom kid', 'cheats.god()': 'Everything: resources, army, ships, research, reveal', 'cheats.state()': 'Raw save object',
     };
     console.table(list);
@@ -95,9 +95,9 @@ const cheats = {
   build() { S.buildings.filter((b) => b.build > 0).forEach(completeBuilding); return done('construction finished'); },
   research() { S.buildings.filter((b) => b.research).forEach(completeResearch); return done('research finished'); },
   researchAll() { for (const [id, r] of Object.entries(RESEARCH)) S.research[id] = r.max; return done('all technology researched'); },
-  army(n = 50) { for (const u of Object.keys(UNITS)) S.army[u] += n; return done(`+${n} of every unit`); },
+  army(n = 50) { for (const u of Object.keys(UNITS)) S.army[u] += n; return done(`+${n} of every unit (incl. seamen)`); },
   ships(n = 5) { for (const t of SHIP_TYPES) S.harbor[t] += n; return done(`+${n} of every ship`); },
-  generals() { for (const g of GENERALS) { if (!ownedGeneral(g.id)) S.generals.push({ id: g.id, stars: 5 }); else ownedGeneral(g.id).stars = 5; } return done('all generals unlocked'); },
+  generals(n = 1) { for (const g of GENERALS) for (let k = 0; k < n; k++) { const r = grantGeneral(g.id); genInst(r.uid).stars = 5; } return done(`+${n} copy of every general (5★)`); },
   items(n = 5) { for (const k of Object.keys(ITEMS)) S.items[k] += n; return done(`+${n} of every item`); },
   reveal() { S.world.seen.fill(1); fogDirty = true; return done('map revealed'); },
   time(sec = 600) { window.ironcrown.debug.fastForward(sec); return done(`${sec}s simulated`); },
@@ -110,6 +110,7 @@ const cheats = {
     return done(launchRaid(k) ? `${k.name} raids you` : `${k.name} has no land route to you`);
   },
   pirates() { spawnPirates(); return done('pirates spawned'); },
+  seamen(n = 100) { S.army.seaman += n; return done(`+${n} seamen`); },
   peace() { S.kingdoms.forEach((k) => { k.atWar = false; k.relation = 60; }); return done('peace in our time'); },
   war(kid = 0) { DIPLO.war(S.kingdoms[kid]); return done(`war with ${S.kingdoms[kid].name}`); },
   god() { cheats.res(1e6); cheats.max(); cheats.army(200); cheats.ships(10); cheats.researchAll(); cheats.generals(); cheats.reveal(); return done('👑 god mode'); },

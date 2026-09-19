@@ -53,7 +53,8 @@ function updateHud() {
   // threat alerts
   const threats = S.aiArmies.filter((a) => a.kind === 'raid');
   const pir = S.aiFleets.filter((f) => f.owner === 'pirate' && isSeen(f.at));
-  const alerts = threats.map((a) => `<button class="alert" data-action="focus-hex" data-arg="${a.at}">⚠ ${esc(S.kingdoms[a.kid].name)} army → capital · ETA ${fmtTime(etaAi(a))}</button>`)
+  const alerts = Battles.list.filter((b) => !b.done).map((b) => `<button class="alert battle" data-action="b-focus" data-arg="${b.id}">⚔️ Battle: ${esc(b.cfg.title)} — command it!</button>`)
+    .concat(threats.map((a) => { const tgt = a.targetHex ?? S.world.capital, cap = tgt === S.world.capital; return `<button class="alert" data-action="focus-hex" data-arg="${a.at}">⚠ ${esc(S.kingdoms[a.kid].name)} army → ${cap ? 'capital' : hexName(tgt) + (isDefended(tgt) ? '' : ' (undefended)')} · ETA ${fmtTime(etaAi(a))}</button>`; }))
     .concat(pir.map((p) => `<button class="alert pirate" data-action="focus-hex" data-arg="${p.at}">🏴‍☠️ Pirates sighted</button>`))
     .concat(S.pirateBlockade > 0 ? [`<span class="alert">⚓ Port blockaded ${fmtTime(S.pirateBlockade)}</span>`] : []);
   const html = alerts.join('');
@@ -81,9 +82,43 @@ function relationBar(k) {
   return `<span class="rel" style="color:${c}">${label} (${Math.round(v)})</span>`;
 }
 function generalChip(gid) {
-  if (!gid) return '<span class="muted small">No general</span>';
+  if (!gid || !genInst(gid)) return '<span class="muted small">No general</span>';
   const g = generalData(gid);
-  return `<span class="gchip r-${g.rarity}">${g.icon} ${esc(g.name)} ${'★'.repeat(ownedGeneral(gid).stars)}</span>`;
+  return `<span class="gchip r-${g.rarity}">${g.icon} ${esc(g.name)} ${'★'.repeat(genInst(gid).stars)}</span>`;
+}
+function battleDefaults(e, kind) {
+  const opt = (obj, cur) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${v.icon ? v.icon + ' ' : ''}${v.name || v}</option>`).join('');
+  return `<div class="row wrap small bdef"><span class="muted">Battle plan</span>
+    <select data-entform="${kind}:${e.id}" title="Formation">${opt(FORMATIONS, e.formation || 'line')}</select>
+    <select data-entstance="${kind}:${e.id}" title="Stance">${opt(STANCES, e.stance || 'advance')}</select>
+    <select data-enttarget="${kind}:${e.id}" title="Target priority">${opt(TARGETS, e.target || 'nearest')}</select></div>`;
+}
+/* ---------- live battle command bar ---------- */
+function renderBattleHud() {
+  const box = el('battle-hud');
+  const live = Battles.list;
+  if (!live.length) { if (!box.hidden) { box.hidden = true; box.dataset.html = ''; } return; }
+  const b = Battles.get(Battles.focus) || live[live.length - 1];
+  const cnt = (side) => Battles.active(b, side).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
+  const tabs = live.length > 1 ? `<div class="bh-tabs">${live.map((x) => `<button class="${x === b ? 'active' : ''}" data-action="b-tab" data-arg="${x.id}">⚔️ ${esc(x.cfg.title.slice(0, 26))}</button>`).join('')}</div>` : '';
+  let h = tabs + `<div class="bh-head"><b>${esc(b.cfg.title)}</b><span class="muted">${b.done ? (b.result.win ? '🏆 Victory' : '💀 Defeat') : fmtTime(BATTLE_LIMIT - b.t)}</span>
+    <span class="bh-count"><span style="color:#f2c14e">${cnt(0)}</span> vs <span style="color:${b.cfg.right.color === '#222' ? '#ccc' : b.cfg.right.color}">${cnt(1)}</span>${b.towers.length ? ` · 🗼${b.towers.filter((t) => !t.dead && t.side === 1).length}` : ''}</span>
+    <span class="spacer"></span>${btn('🎯', 'b-focus', b.id, { cls: 'sm ghost', title: 'Center camera' })}${b.done ? '' : btn('⏭ Auto-resolve', 'b-resolve', b.id, { cls: 'sm ghost' })}</div>`;
+  if (!b.done) {
+    for (const G of b.groups) {
+      if (G.side !== 0) continue;
+      const n = Battles.active(b, 0).filter((q) => q.g === G.gi).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
+      if (!n) { h += `<div class="bh-row muted small">${esc(G.name)} — routed</div>`; continue; }
+      h += `<div class="bh-row"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>
+        <div class="seg">${Object.entries(FORMATIONS).map(([k, f]) => `<button class="${G.formation === k ? 'on' : ''}" data-action="b-form" data-arg="${b.id}:${G.gi}:${k}" title="${esc(f.name + ': ' + f.desc)}">${f.icon} ${f.name}</button>`).join('')}</div>
+        <div class="seg">${Object.entries(STANCES).map(([k, st]) => `<button class="${G.stance === k ? 'on' : ''} ${k === 'retreat' ? 'warn' : ''}" data-action="b-stance" data-arg="${b.id}:${G.gi}:${k}" title="${esc(st.desc)}">${st.icon} ${st.name}</button>`).join('')}</div>
+        <select data-btarget="${b.id}:${G.gi}" title="Target priority">${Object.entries(TARGETS).map(([k, v]) => `<option value="${k}" ${G.target === k ? 'selected' : ''}>🎯 ${v}</option>`).join('')}</select></div>`;
+    }
+    const E = b.groups.find((G) => G.side === 1);
+    h += `<div class="bh-row small muted">Enemy: ${FORMATIONS[E.formation].icon} ${FORMATIONS[E.formation].name} · ${STANCES[E.stance].name}</div>`;
+  }
+  if (box.dataset.html !== h && !UI.hudPointer && !(document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT')) { box.innerHTML = h; box.dataset.html = h; }
+  box.hidden = false;
 }
 
 /* ---------- panel ---------- */
@@ -194,7 +229,7 @@ function shipRow(t) {
   const yards = S.buildings.filter((b) => b.type === 'shipyard' && b.queue.length);
   return `<div class="card"><div class="unit-row"><span class="unit-ico">${Sh.icon}</span><div><b>${Sh.name}</b> <span class="muted">× ${S.harbor[t]} in harbour</span>
     <div class="stats-mini">⚔ ${st.atk.toFixed(0)} · ❤ ${st.hp.toFixed(0)} · 💨 ${st.speed.toFixed(2)}${Sh.cap ? ' · 🚣 carries ' + Sh.cap : ''} · ⏱${shipTime(t).toFixed(0)}s</div>
-    <div class="stats-mini">${Sh.desc}</div><div>${costHtml(shipCost(t), S.res)}</div></div>
+    <div class="stats-mini">${Sh.desc}</div><div>${costHtml(shipCost(t), S.res)} <span class="cost"><span class="${S.army.seaman < Sh.crew ? 'short' : ''}" title="Crew of Seamen">🧑‍✈️${Sh.crew}</span></span></div></div>
     <div class="row">${btn('+1', 'build-ship', t + ':1', { cls: 'sm', disabled: !!err })}</div></div>
     ${err ? `<div class="small muted" style="margin-top:4px">🔒 ${esc(err)}</div>` : ''}
     ${yards.some((b) => b.queue.includes(t)) ? `<div class="queue">${yards.map((b) => b.queue.map((x, k) => `<span class="${k === 0 ? 'first' : ''}">${SHIPS[x].icon}${k === 0 ? ' ' + fmtTime(b.trainLeft) : ''}</span>`).join('') + `<button class="btn sm ghost" data-action="cancel-queue" data-arg="${b.id}">✕</button>`).join('')}</div>` : ''}</div>`;
@@ -225,7 +260,9 @@ function divisionCard(d) {
   const eta = etaOf(d), where = d.at === S.world.capital && !d.path.length ? 'At the capital' : `${d.path.length ? 'Marching' : 'Stationed'} at ${hexName(d.at)}`;
   return `<div class="card ${UI.selEntity && UI.selEntity.id === d.id ? 'hl' : ''}"><div class="row"><span class="swatch" style="background:${d.color}"></span><b>${esc(d.name)}</b><span class="spacer"></span><span class="small muted">⚡${fmt(armyPower(d.units, d.general))}</span></div>
     <div class="pills">${unitList(d.units, UNITS)}</div>
-    <div class="small">${generalChip(d.general)} · ${where}${d.path.length ? ` · ${d.order ? d.order.type : 'move'} · ETA ${fmtTime(eta)}` : ''}${d.status === 'fighting' ? ' · ⚔ fighting' : ''}</div>
+    <div class="small">${where}${d.path.length ? ` · ${d.order ? d.order.type : 'move'} · ETA ${fmtTime(eta)}` : d.at !== S.world.capital ? ' · 🛡️ guarding' : ''}${d.status === 'fighting' ? ' · ⚔ fighting' : ''}</div>
+    <div class="row small" style="margin-top:4px"><span class="muted">General</span><select data-divgen="${d.id}">${[d.general].concat(idleGenerals().map((g) => g.uid)).concat(S.divisions.filter((x) => x !== d && x.general).map((x) => x.general)).filter((v, k, arr) => v && arr.indexOf(v) === k).map((u) => { const gd = generalData(u), post = generalPost(u); return `<option value="${u}" ${u === d.general ? 'selected' : ''}>${gd.icon} ${esc(gd.name)} ${'★'.repeat(genInst(u).stars)}${u === d.general ? '' : post.kind === 'division' ? ' (swap)' : ''}</option>`; }).join('')}</select></div>
+    ${battleDefaults(d, 'division')}
     <div class="row wrap" style="margin-top:6px">${btn('🗺️ Select', 'select-entity', 'division:' + d.id, { cls: 'sm' })}
       ${atHome(d) ? btn('➕ Reinforce', 'reinforce', d.id, { cls: 'sm ghost' }) + btn('Disband', 'disband', d.id, { cls: 'sm ghost' }) : btn('🏠 Return', 'return', 'division:' + d.id, { cls: 'sm ghost' })}
       ${btn('✏️', 'rename-entity', 'division:' + d.id, { cls: 'sm ghost', title: 'Rename' })}</div></div>`;
@@ -240,8 +277,16 @@ function renderArmy() {
   h += S.divisions.map(divisionCard).join('') || '<p class="small muted">No divisions in the field.</p>';
   h += `<div class="row">${btn('⚔️ Muster a new division', 'muster', '', { disabled: S.divisions.length >= divisionLimit() })}</div>`;
   if (S.boosts.warhorn || S.boosts.salve) h += `<p class="small">Next battle: ${S.boosts.warhorn ? '📯 War Horn ' : ''}${S.boosts.salve ? '🧪 Healing Salve' : ''}</p>`;
+  h += scoutSection();
   h += '<h3>Train troops</h3>';
-  for (const u of Object.keys(UNITS)) h += unitRow(u);
+  for (const u of Object.keys(UNITS)) if (u !== 'seaman') h += unitRow(u);
+  return h;
+}
+function scoutSection() {
+  const n = S.army.scout;
+  let h = `<h3>Scouts · ${n} at home</h3><p class="small muted">Dispatch a party, then click anywhere on the World map: they walk there and every hex along the way is revealed.</p>
+    <div class="row"><select id="scout-dispatch" style="width:70px">${Array.from({ length: Math.max(1, n) }, (_, k) => `<option>${k + 1}</option>`).join('')}</select>${btn('🔭 Dispatch scouts', 'dispatch-scouts', '', { disabled: n < 1, title: n ? '' : 'Train scouts at the Scout Lodge' })}</div>`;
+  h += S.scouts.map((p) => `<div class="member clickable" data-action="select-entity" data-arg="scout:${p.id}">🔭 <b>Scouts ×${p.n}</b><span class="spacer"></span><span class="small muted">${p.path.length ? 'moving · ETA ' + fmtTime(etaOf(p)) : hexName(p.at)}</span></div>`).join('');
   return h;
 }
 
@@ -251,6 +296,7 @@ function fleetCard(f) {
   return `<div class="card ${UI.selEntity && UI.selEntity.id === f.id ? 'hl' : ''}"><div class="row"><span>⚓</span><b>${esc(f.name)}</b><span class="spacer"></span><span class="small muted">⚡${fmt(fleetPower(f.ships, f.general))} · 💨${fleetSpeed(f).toFixed(2)}</span></div>
     <div class="pills">${unitList(f.ships, SHIPS)}</div>
     <div class="small">${generalChip(f.general)} · ${where}${f.path.length ? ` · ETA ${fmtTime(etaOf(f))}` : ''}${f.status === 'fighting' ? ' · ⚔ fighting' : ''}</div>
+    ${battleDefaults(f, 'fleet')}
     <div class="row wrap" style="margin-top:6px">${btn('🗺️ Select', 'select-entity', 'fleet:' + f.id, { cls: 'sm' })}
       ${fleetHome(f) ? btn('Disband', 'disband-fleet', f.id, { cls: 'sm ghost' }) : btn('🏠 Return', 'return', 'fleet:' + f.id, { cls: 'sm ghost' })}
       ${btn('✏️', 'rename-entity', 'fleet:' + f.id, { cls: 'sm ghost', title: 'Rename' })}</div></div>`;
@@ -258,7 +304,8 @@ function fleetCard(f) {
 function renderNavy() {
   let h = `<h2>Navy</h2><dl class="kv"><dt>Ships (all) / capacity</dt><dd>${shipCount(allShips())} + ${queuedShips()} queued / ${navalCap()}</dd><dt>Troop transport capacity</dt><dd>🚣 ${transportCapacity()}</dd>
     <dt>Ship upkeep</dt><dd>🪙 ${(upkeep().gold * 60).toFixed(1)}/min</dd>${S.winds > 0 ? `<dt>Favourable winds</dt><dd>🌬️ ${fmtTime(S.winds)}</dd>` : ''}</dl>
-    <h3>Home harbour</h3><div class="pills">${unitList(S.harbor, SHIPS)}</div><p class="small muted">Ships in harbour defend your port from pirates.</p>
+    <h3>Seamen · ${S.army.seaman} ready</h3><p class="small muted">Every ship needs a crew of Seamen, trained at the Port. Crews go down with their ship.</p>${unitRow('seaman')}
+    <h3>Home harbour</h3><div class="pills">${unitList(S.harbor, SHIPS)}</div><p class="small muted">Ships in harbour defend your port from pirates. Fleets can also dock at any Dock you build on the coast.</p>
     <h3>Fleets · ${S.fleets.length}/${fleetLimit()}</h3>
     <p class="small muted">Group ships into fleets and sail them on the World map: explore, salvage shipwrecks, burn pirate coves, blockade enemy ports and hunt enemy fleets. Cogs & Galleons carry divisions across the sea automatically.</p>`;
   h += S.fleets.map(fleetCard).join('') || '<p class="small muted">No fleets at sea.</p>';
@@ -270,20 +317,25 @@ function renderNavy() {
 
 /* ---------- Generals tab ---------- */
 function renderGenerals() {
-  let h = `<h2>Generals</h2><p class="small muted">Assign generals to posts: each <b>division</b> or <b>fleet</b> can have one commander, and the <b>Castellan</b> leads your home garrison. Their Attack / Health / Speed boost the troops they lead; specialists add +15% to their unit type. Duplicates from Mystery Boxes add stars (+10% stats each).</p>
-    <h3>Roster · ${S.generals.length}/${GENERALS.length} discovered</h3>`;
+  const discovered = new Set(S.generals.map((g) => g.id)).size;
+  let h = `<h2>Generals</h2><p class="small muted">Every <b>division needs its own general</b>, and a general can hold only one post (a division, a fleet, or <b>Castellan</b> of the capital). You can own several copies of the same general: extra copies can lead other divisions, or be merged to <b>promote</b> (+★, +10% stats). Hire more at the 🍺 Tavern in the Shop.</p>
+    <h3>Roster · ${S.generals.length} generals · ${discovered}/${GENERALS.length} kinds discovered</h3>`;
   const order = ['legendary', 'epic', 'rare', 'common'];
-  const owned = [...S.generals].sort((a, b) => order.indexOf(generalData(a.id).rarity) - order.indexOf(generalData(b.id).rarity));
-  const posts = [['none', '', 'Idle'], ['castellan', '', '🏰 Castellan']].concat(S.divisions.map((d) => ['division', d.id, '⚔️ ' + d.name])).concat(S.fleets.map((f) => ['fleet', f.id, '⚓ ' + f.name]));
+  const owned = [...S.generals].sort((a, b) => order.indexOf(generalData(a.uid).rarity) - order.indexOf(generalData(b.uid).rarity) || a.id.localeCompare(b.id) || b.stars - a.stars);
   for (const og of owned) {
-    const g = generalData(og.id), st = generalStats(og.id), post = generalPost(og.id);
+    const g = generalData(og.uid), st = generalStats(og.uid), post = generalPost(og.uid), copies = copiesOf(og.id).length;
     const cur = post.kind === 'none' ? 'none:' : post.kind === 'castellan' ? 'castellan:' : `${post.kind}:${post.id}`;
+    const locked = post.kind === 'division';
+    const posts = locked ? S.divisions.map((d) => ['division', d.id, (d.id === post.id ? '⚔️ ' : '⇄ swap with ') + d.name])
+      : [['none', '', 'Idle'], ['castellan', '', '🏰 Castellan']].concat(S.fleets.map((f) => ['fleet', f.id, '⚓ ' + f.name])).concat(S.divisions.map((d) => ['division', d.id, '⇄ lead ' + d.name]));
+    const spare = S.generals.some((x) => x.id === og.id && x.uid !== og.uid && generalPost(x.uid).kind === 'none');
     h += `<div class="card general-card"><div class="general"><div class="portrait r-${g.rarity}">${g.icon}</div><div>
-      <div class="rarity r-${g.rarity}">${RARITY[g.rarity].name}${g.spec ? ` · ${g.spec === 'fleet' ? '⚓ Admiral' : UNITS[g.spec].icon + ' ' + UNITS[g.spec].name + ' specialist'}` : ''}</div>
+      <div class="rarity r-${g.rarity}">${RARITY[g.rarity].name}${g.spec ? ` · ${g.spec === 'fleet' ? '⚓ Admiral' : UNITS[g.spec].icon + ' ' + UNITS[g.spec].name + ' specialist'}` : ''}${copies > 1 ? ` · ×${copies} owned` : ''}</div>
       <b>${g.name}</b> <span class="stars">${'★'.repeat(og.stars)}${'☆'.repeat(5 - og.stars)}</span>${statBars(st)}</div></div>
-      <div class="row" style="margin-top:6px"><span class="small muted">Post</span><select data-assign="${og.id}">${posts.map(([k, id, label]) => `<option value="${k}:${id}" ${cur === `${k}:${id}` ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div></div>`;
+      <div class="row" style="margin-top:6px"><span class="small muted">Post</span><select data-assign="${og.uid}">${posts.map(([k, id, label]) => `<option value="${k}:${id}" ${cur === `${k}:${id}` ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>
+      ${spare && og.stars < 5 ? btn('⭐ Promote', 'promote', og.uid, { cls: 'sm', title: 'Merge an idle spare copy into this general' }) : ''}</div></div>`;
   }
-  for (let i = S.generals.length; i < GENERALS.length; i++) h += `<div class="card locked-general"><div class="portrait">❔</div><span class="small muted">Undiscovered — find in Mystery Boxes, ruins or pirate coves</span></div>`;
+  h += `<div class="card small">🍺 Need more commanders? ${btn('Hire at the Tavern 🪙900', 'hire', '', { cls: 'sm', disabled: S.res.gold < 900 })}</div>`;
   h += '<h3>Items</h3>';
   for (const [k, it] of Object.entries(ITEMS)) {
     h += `<div class="card"><div class="row"><span class="big-ico sm">${it.icon}</span><div><b>${it.name}</b> <span class="muted">× ${S.items[k]}</span><div class="small muted">${it.desc}</div></div><span class="spacer"></span>
@@ -301,13 +353,15 @@ function renderShop() {
       <div class="odds">${Object.entries(b.rarity).filter(([, v]) => v).map(([r, v]) => `<span class="r-${r}">${RARITY[r].name} ${v}%</span>`).join('')}</div>
       <div class="row">${costHtml(b.cost, S.res)}<span class="spacer"></span>${btn('Open', 'open-box', b.id, { disabled: !canAfford(b.cost) })}</div></div></div></div>`;
   }
-  return h + `<p class="small muted">Boxes opened: ${S.stats.boxesOpened}</p>`;
+  h += `<h3>🍺 Tavern</h3><div class="card"><div class="row"><span class="big-ico">🍺</span><div><b>Hire a general</b><div class="small muted">A wandering commander joins you (usually common, 15% rare). Every division needs its own general.</div></div><span class="spacer"></span>${btn('Hire 🪙900', 'hire', '', { disabled: S.res.gold < 900 })}</div></div>`;
+  return h + `<p class="small muted">Boxes opened: ${S.stats.boxesOpened} · Generals owned: ${S.generals.length}</p>`;
 }
 
 /* ---------- World (Map) panel ---------- */
 function ordersFor(e, i) {
   if (i < 0) return [];
   const o = [], f = S.world.feat[i], owner = S.world.owner[i], seen = isSeen(i);
+  if (isScout(e)) { if (scoutCost(i) < Infinity) o.push(['move', '🔭 Scout here']); return o; }
   if (isFleet(e)) {
     if (isWater(i)) o.push(['move', '⛵ Sail here']);
     if (f && f.type === 'wreck' && !f.salvaged && seen) o.push(['salvage', '⚓ Salvage wreck']);
@@ -317,11 +371,10 @@ function ordersFor(e, i) {
     const ef = S.aiFleets.find((x) => x.at === i && aiFleetHostile(x) && seen);
     if (ef) o.push(['hunt', `🎯 Hunt ${ef.owner === 'pirate' ? 'pirates' : 'enemy fleet'}`]);
   } else {
-    if (isPassable(i) || (isWater(i) && canEmbark(e))) o.push(['move', '🚶 March here']);
+    if (isPassable(i) || (isWater(i) && canEmbark(e))) o.push(['move', S.world.owner[i] === -2 ? '🛡️ Station & guard here' : '🚶 March here']);
     if (owner >= 0 && seen && !(S.allianceId && S.kingdoms[owner].allianceId === S.allianceId)) o.push(['attack', i === S.kingdoms[owner].capital ? `⚔️ Assault ${S.kingdoms[owner].name}` : '🏳️ Invade this hex']);
     if (f && seen && ((f.type === 'ruins' && !f.looted) || (f.type === 'cave' && !f.explored))) o.push(['explore', f.type === 'ruins' ? '🏛️ Explore ruins' : '🕳️ Explore cave']);
     if (f && f.type === 'fort' && !f.captured && seen) o.push(['capture', '🏯 Capture fort']);
-    if (owner === -1 && seen && isPassable(i) && !(f && ['fort', 'ruins'].includes(f.type) && !(f.looted || f.captured))) o.push(['claim', '🏳️ March & claim']);
     const ea = S.aiArmies.find((x) => x.at === i && (x.kind === 'raid' || hostileToPlayer(S.kingdoms[x.kid])) && seen);
     if (ea) o.push(['intercept', '🛡️ Intercept army']);
   }
@@ -329,6 +382,12 @@ function ordersFor(e, i) {
 }
 function renderEntityCard(e) {
   const fleet = isFleet(e);
+  if (isScout(e)) {
+    return `<div class="card hl"><div class="row">🔭 <b>Scout party ×${e.n}</b><span class="spacer"></span><span class="small muted">sight ${scoutRadius()} hexes</span></div>
+      <div class="small">${e.path.length ? `Moving · ETA ${fmtTime(etaOf(e))}` : `At ${hexName(e.at)}`}</div>
+      <p class="small">👉 <b>Click anywhere on the map</b> to send them there. Every hex they pass is revealed.</p>
+      <div class="row">${btn('🏠 Return home', 'return', 'scout:' + e.id, { cls: 'sm ghost' })}${btn('Deselect', 'deselect-entity', '', { cls: 'sm ghost' })}${btn('🎯 Center', 'focus-entity', '', { cls: 'sm ghost' })}</div></div>`;
+  }
   let h = fleet ? fleetCard(e) : divisionCard(e);
   const i = UI.worldSel;
   const orders = ordersFor(e, i);
@@ -349,10 +408,10 @@ function renderWorldInfo() {
     h += `<h2>World Map</h2><p class="small muted">Drag to pan, scroll or pinch to zoom, and use the minimap to jump around. Click a hex to inspect it, and click one of your banners or ships to command it.</p>
       <dl class="kv"><dt>Territory</dt><dd>${playerTiles()} / ${territoryLimit()} hexes</dd><dt>Scouts at home</dt><dd>🔭 ${S.army.scout}</dd><dt>Divisions / fleets</dt><dd>${S.divisions.length} / ${S.fleets.length}</dd>
       <dt>Land bonus</dt><dd>${RES.filter((k) => tb[k] > 0).map((k) => `${RES_META[k].icon}+${(tb[k] * 60).toFixed(k === 'diamonds' ? 1 : 0)}/m`).join(' ') || 'none'}</dd></dl>`;
+    h += scoutSection();
     if (S.divisions.length || S.fleets.length) h += '<h3>Your forces</h3>' + S.divisions.map((d) => `<div class="member clickable" data-action="select-entity" data-arg="division:${d.id}"><span class="swatch" style="background:${d.color}"></span><b>${esc(d.name)}</b><span class="spacer"></span><span class="small muted">${armyHousing(d.units)} troops · ${d.path.length ? 'moving' : hexName(d.at)}</span></div>`).join('')
       + S.fleets.map((f) => `<div class="member clickable" data-action="select-entity" data-arg="fleet:${f.id}"><span>⚓</span><b>${esc(f.name)}</b><span class="spacer"></span><span class="small muted">${shipCount(f.ships)} ships · ${f.path.length ? 'sailing' : hexName(f.at)}</span></div>`).join('');
   } else if (i >= 0) h += hexCard(i);
-  if (S.missions.length) h += '<h3>Scout missions</h3>' + S.missions.map((m) => `<div class="card small">🔭 ${m.n} → ${hexName(m.hex)} ${progress(1 - m.left / m.total)} ${fmtTime(m.left)}</div>`).join('');
   h += '<h3>Known kingdoms</h3>';
   const known = S.kingdoms.filter((k) => isSeen(k.capital));
   h += known.map((k) => { const a = allianceOf(k.allianceId); return `<div class="member clickable" data-action="focus-kingdom" data-arg="${k.id}"><span class="dot" style="background:${k.color}"></span><div><b>${k.name}</b><div class="small muted">Keep ${k.hall} · ${kingdomTiles(k.id)} hexes${a ? ' · ' + a.emblem + ' ' + esc(a.name) : ''}</div></div><span class="spacer"></span><span class="small">${relationBar(k)}</span></div>`; }).join('') || '<p class="small muted">None yet — scout into the fog.</p>';
@@ -373,10 +432,10 @@ function hexCard(i) {
       if (f.type === 'cove') state = f.destroyed ? 'Burned to the waterline.' : `Pirate strength ⚡~${f.power}.`;
       h += `<div class="card"><b>${F.icon} ${F.name}</b><div class="small">${state}</div><div class="small muted">${F.desc}</div></div>`;
     }
-    if (o === -2) h += `<p class="card small">🏳️ Your territory${i === S.world.capital ? ' — the capital' : ''}.</p>`;
+    if (o === -2) h += territoryCard(i);
     if (o === -1 && terrain[i] !== T.WATER && terrain[i] !== T.MOUNTAIN) {
-      const err = claimError(i);
-      h += `<div class="card"><b>Neutral land</b><div class="row" style="margin-top:6px">${costHtml(claimCost(), S.res)}<span class="spacer"></span>${btn('🏳️ Claim', 'claim', i, { disabled: !!err, title: err || '' })}</div>${err ? `<div class="small muted">${esc(err)}</div>` : ''}</div>`;
+      const err = claimError(i), far = distToTerritory(i);
+      h += `<div class="card"><b>Neutral land</b> <span class="small muted">${far > 1 ? `· ${far} hexes from your borders (+${Math.round(20 * (far - 1))}% cost)` : '· borders your land'}</span><div class="row" style="margin-top:6px">${costHtml(claimCost(i), S.res)}<span class="spacer"></span>${btn('🏳️ Claim', 'claim', i, { disabled: !!err, title: err || '' })}</div>${err ? `<div class="small muted">${esc(err)}</div>` : '<div class="small muted">Outlying land is a raid target unless you station a division or build a watchtower/fortress.</div>'}</div>`;
     }
     if (o >= 0) h += kingdomCard(S.kingdoms[o]);
     const here = S.aiArmies.filter((a) => a.at === i).concat(S.aiFleets.filter((f2) => f2.at === i));
@@ -384,7 +443,7 @@ function hexCard(i) {
   }
   const n = S.army.scout;
   h += `<h3>Scouting</h3><div class="card"><div class="row"><span>Send</span><select id="scout-count" style="width:70px">${Array.from({ length: Math.max(1, n) }, (_, k) => `<option>${k + 1}</option>`).join('')}</select><span class="small">of ${n} scouts</span><span class="spacer"></span>
-    ${btn('🔭 Send', 'scout', i, { disabled: n < 1, title: n ? '' : 'Train scouts at the Scout Lodge' })}</div><div class="small muted" style="margin-top:4px">Travel ≈ ${fmtTime(scoutTime(i, 1))} · reveals the area, explores caves, gathers intel.</div></div>`;
+    ${btn('🔭 Scout here', 'scout-here', i, { disabled: n < 1, title: n ? '' : 'Train scouts at the Scout Lodge' })}</div><div class="small muted" style="margin-top:4px">A scout party walks here from your capital, revealing every hex on the way.</div></div>`;
   const forces = S.divisions.concat(S.fleets).filter((e) => ordersFor(e, i).length);
   if (forces.length && !selectedEntity()) h += '<h3>Send forces</h3>' + forces.map((e) => `<div class="member clickable" data-action="select-entity" data-arg="${isFleet(e) ? 'fleet' : 'division'}:${e.id}">${isFleet(e) ? '⚓' : `<span class="swatch" style="background:${e.color}"></span>`}<b>${esc(e.name)}</b><span class="spacer"></span><span class="small muted">select →</span></div>`).join('');
   return h;
@@ -465,4 +524,26 @@ function renderLog() {
     <dt>Raids repelled / suffered</dt><dd>${st.raidsRepelled} / ${st.raidsLost}</dd><dt>Ruins explored · wrecks salvaged</dt><dd>${st.ruinsExplored} · ${st.wrecksSalvaged}</dd>
     <dt>Scouting missions · technologies</dt><dd>${st.scouted} · ${st.researched}</dd></dl>` +
     S.log.map((l) => `<div class="log-item ${l.kind}"><time>${fmtTime(l.t)}</time><span>${esc(l.text)}</span></div>`).join('');
+}
+
+function territoryCard(i) {
+  const cap = i === S.world.capital, def = hexDefense(i), b = tbAt(i);
+  let h = `<div class="card"><b>🏳️ Your territory${cap ? ' — the capital' : ''}</b>
+    <div class="small">Defense: ${def > 0 ? `🛡️ ${fmt(def)}` : '<span class="bad-txt">undefended — raiders love this</span>'}${stationedAt(i).length ? ` · guarded by ${stationedAt(i).map((d) => esc(d.name)).join(', ')}` : ''}</div>`;
+  if (cap) return h + '<div class="small muted">Build in the capital from the 🏰 Kingdom view.</div></div>';
+  if (b) {
+    const d = TERRITORY_BUILDINGS[b.type], tp = tbProduction(i), err = tbError(b.type, i, true);
+    h += `<h3>${d.icon} ${d.name} · level ${b.level}/${TB_MAX}</h3>`;
+    if (b.build > 0) h += `${progress(1 - b.build / b.total)}<div class="small muted">${b.level ? 'Upgrading' : 'Building'}… ${fmtTime(b.build)}</div>`;
+    h += `<div class="small">${d.desc}${tp ? ' · ' + Object.entries(tp).map(([k, v]) => `${RES_META[k].icon}+${(v * 60).toFixed(k === 'diamonds' ? 1 : 0)}/min`).join(' ') : ''}${d.def ? ` · 🛡️ ${d.def * Math.max(1, b.level)}` : ''}</div>`;
+    if (b.level < TB_MAX) h += `<div class="row" style="margin-top:6px">${costHtml(tbCost(b.type, b.level + 1), S.res)}<span class="spacer"></span>${btn('⬆ Upgrade', 'tb-build', `${b.type}:${i}`, { cls: 'sm', disabled: !!err, title: err || '' })}</div>`;
+    return h + '</div>';
+  }
+  h += '<h3>Build here</h3><div class="tb-grid">';
+  for (const [k, d] of Object.entries(TERRITORY_BUILDINGS)) {
+    if (!tbAllowed(k, i)) continue;
+    const err = tbError(k, i);
+    h += `<button class="build-item ${err ? 'locked' : ''}" data-action="tb-build" data-arg="${k}:${i}" data-tb="${k}" ${err ? `title="${esc(err)}"` : ''}><div class="bi-top"><span class="bi-ico">${d.icon}</span><b>${d.name}</b></div><div>${costHtml(d.cost, S.res)}</div><div class="desc">${esc(d.desc)}</div></button>`;
+  }
+  return h + '</div></div>';
 }

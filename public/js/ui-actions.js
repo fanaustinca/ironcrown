@@ -47,8 +47,10 @@ function showSettings() {
     ${chk('showGrid', 'Show hex grid lines')}
     ${chk('prodNumbers', 'Floating production numbers')}
     ${chk('particles', 'Particles & effects')}
+    <div class="setting"><span>Graphics quality</span>${sel('graphics', [['high', '✨ High — realistic textures'], ['medium', '🎨 Classic'], ['low', '🔷 Low-poly (fastest)']])}</div>
     <h3>Gameplay</h3>
-    <div class="setting"><span>Battles</span>${sel('battleMode', [['watch', '👁️ Watch battles'], ['auto', '⚡ Auto-resolve instantly']])}</div>
+    <div class="setting"><span>Battles</span>${sel('battleMode', [['watch', '⚔️ Command battles on the map'], ['auto', '⚡ Auto-resolve instantly']])}</div>
+    ${chk('focusBattles', 'Move the camera to battles when they start')}
     <p class="small muted">Settings are stored in this browser. Version v${GAME_VERSION}.</p>
     <div class="actions">${btn('Done', 'close-modal')}</div>`);
 }
@@ -65,22 +67,24 @@ function sliderRows(pool, table, prefix, defaults = 'all') {
     <input type="range" min="0" max="${pool[k]}" value="${v}" data-${prefix}="${k}" /><b id="${prefix}-${k}" style="width:60px;text-align:right">${v}/${pool[k]}</b></div>`;
   }).join('') || '<p class="muted small">Nothing available.</p>';
 }
-function generalSelect(id) {
-  const idle = S.generals.filter((g) => generalPost(g.id).kind === 'none');
-  return `<select id="${id}"><option value="">— no general —</option>${idle.map((g) => `<option value="${g.id}">${generalData(g.id).icon} ${esc(generalData(g.id).name)} (${RARITY[generalData(g.id).rarity].name})</option>`).join('')}</select>`;
+function generalSelect(id, optional) {
+  const idle = idleGenerals();
+  if (!idle.length && !optional) return `<p class="small bad-txt">No idle general! Every division needs its own commander.</p>${btn('🍺 Hire one at the Tavern (🪙900)', 'hire-muster', '', { cls: 'sm' })}<select id="${id}" hidden></select>`;
+  return `<select id="${id}">${optional ? '<option value="">— no admiral —</option>' : ''}${idle.map((g) => `<option value="${g.uid}">${generalData(g.uid).icon} ${esc(generalData(g.uid).name)} ${'★'.repeat(g.stars)} (${RARITY[generalData(g.uid).rarity].name})</option>`).join('')}</select>`;
 }
 function showMuster() {
   showModal(`<h2>⚔️ Muster a division</h2><p class="small muted">Troops leave the capital garrison and form a named division you can command on the World map.</p>
     <input type="text" id="div-name" placeholder="Division name" value="${esc(['2nd', '3rd', '4th', '5th', '6th'][S.divisions.length % 5] + ' ' + pick(['Legion', 'Guard', 'Lancers', 'Company', 'Vanguard']))}" maxlength="24" />
     <h3>Troops</h3>${sliderRows(S.army, UNITS, 'mu')}
-    <h3>General</h3>${generalSelect('div-general')}
+    <h3>General (required)</h3>${generalSelect('div-general')}
+    <h3>Battle plan</h3><div class="row wrap"><select id="div-form">${Object.entries(FORMATIONS).map(([k, f]) => `<option value="${k}">${f.icon} ${f.name}</option>`).join('')}</select><select id="div-stance">${Object.entries(STANCES).map(([k, f]) => `<option value="${k}">${f.icon} ${f.name}</option>`).join('')}</select></div>
     <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Muster', 'muster-yes', '', { id: 'muster-yes' })}</div>`);
 }
 function showFormFleet() {
   showModal(`<h2>⚓ Form a fleet</h2><p class="small muted">Ships leave the home harbour and sail as one fleet.</p>
     <input type="text" id="fleet-name" placeholder="Fleet name" value="${esc(pick(['Royal', 'Northern', 'Storm', 'Golden', 'Iron']) + ' ' + pick(['Squadron', 'Armada', 'Flotilla', 'Fleet']))}" maxlength="24" />
     <h3>Ships</h3>${sliderRows(S.harbor, SHIPS, 'fl')}
-    <h3>Admiral</h3>${generalSelect('fleet-general')}
+    <h3>Admiral (optional)</h3>${generalSelect('fleet-general', true)}
     <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Set sail', 'fleet-yes', '', { id: 'fleet-yes' })}</div>`);
 }
 function readSliders(prefix) { const o = {}; document.querySelectorAll(`[data-${prefix}]`).forEach((r) => { o[r.dataset[prefix]] = +r.value; }); return o; }
@@ -135,7 +139,7 @@ function selectEntity(kind, id) {
 }
 
 /* ---------- actions ---------- */
-const findEnt = (arg) => { const [k, id] = arg.split(':'); return (k === 'division' ? S.divisions : S.fleets).find((e) => e.id === id); };
+const findEnt = (arg) => { const [k, id] = arg.split(':'); return (k === 'division' ? S.divisions : k === 'scout' ? S.scouts : S.fleets).find((e) => e.id === id); };
 const ACTIONS = {
   place(t) { const l = buildLockReason(t); if (l) return toast(l, 'bad'); setView('kingdom'); setTab('info'); UI.placing = t; UI.selected = null; updatePlacingHint(); },
   'cancel-place'() { UI.placing = null; updatePlacingHint(); },
@@ -163,12 +167,30 @@ const ACTIONS = {
   'select-entity'(arg) { const [k, id] = arg.split(':'); selectEntity(k, id); },
   'deselect-entity'() { UI.selEntity = null; },
   claim(i) { claimTile(+i); },
-  scout(i) { sendScouts(+i, +(el('scout-count') ? el('scout-count').value : 1)); },
+  'scout-here'(i) { const p = dispatchScouts(+(el('scout-count') ? el('scout-count').value : 1), +i); if (p) { UI.selEntity = { kind: 'scout', id: p.id }; toast(`🔭 Scouts heading to ${hexName(+i)} (ETA ${fmtTime(etaOf(p))})`); } },
+  'dispatch-scouts'() {
+    const p = dispatchScouts(+(el('scout-dispatch') ? el('scout-dispatch').value : 1));
+    if (!p) return;
+    selectEntity('scout', p.id);
+    toast('🔭 Scout party ready — click anywhere on the map to send them', 'good');
+  },
+  'tb-build'(arg) { const [t, i] = arg.split(':'); buildTerritory(t, +i); },
+  hire() { hireGeneral(); },
+  'hire-muster'() { if (hireGeneral()) showMuster(); },
+  promote(uid) { promoteGeneral(uid); },
+  'b-form'(arg) { const [id, gi, f] = arg.split(':'); const b = Battles.get(+id); if (b) Battles.setFormation(b, +gi, f); renderBattleHud(); },
+  'b-stance'(arg) { const [id, gi, st] = arg.split(':'); const b = Battles.get(+id); if (b) Battles.setStance(b, +gi, st); renderBattleHud(); },
+  'b-resolve'(id) { Battles.resolve(+id); },
+  'b-focus'(id) { const b = Battles.get(+id); if (b) { Battles.focus = b.id; setView('world'); Battles.focusCam(b); } },
+  'b-tab'(id) { Battles.focus = +id; renderBattleHud(); },
   order(kind) { issueOrder(selectedEntity(), kind, UI.worldSel); },
   return(arg) { const e = findEnt(arg); if (e) giveOrder(e, 'return', isFleet(e) ? S.world.harbor : S.world.capital); },
   diplo(arg) { const [k, id] = arg.split(':'); DIPLO[k](S.kingdoms[+id]); },
   muster() { showMuster(); },
-  'muster-yes'() { const d = createDivision(el('div-name').value, readSliders('mu'), el('div-general').value || null); if (d) { closeModal(); toast(`⚔️ ${d.name} mustered`, 'good'); } },
+  'muster-yes'() {
+    const d = createDivision(el('div-name').value, readSliders('mu'), el('div-general').value || null);
+    if (d) { d.formation = el('div-form').value; d.stance = el('div-stance').value; closeModal(); toast(`⚔️ ${d.name} mustered under ${generalData(d.general).name}`, 'good'); }
+  },
   'form-fleet'() { showFormFleet(); },
   'fleet-yes'() { const f = createFleet(el('fleet-name').value, readSliders('fl'), el('fleet-general').value || null); if (f) { closeModal(); toast(`⚓ ${f.name} formed`, 'good'); } },
   reinforce(id) {
@@ -221,7 +243,7 @@ function issueOrder(e, kind, i) {
   if (kind === 'blockade') { const k = S.kingdoms[S.world.owner[i]]; return giveOrder(e, 'blockade', k.capital, { kid: k.id }) && toast(`⚓ ${e.name} sails to blockade ${k.name}`); }
   if (kind === 'hunt') extra.target = (S.aiFleets.find((x) => x.at === i) || {}).id;
   if (kind === 'intercept') extra.target = (S.aiArmies.find((x) => x.at === i) || {}).id;
-  if (giveOrder(e, kind, i, extra) && e.path.length) toast(`${isFleet(e) ? '⚓' : '⚔️'} ${e.name}: ${kind} → ${hexName(i)} (ETA ${fmtTime(etaOf(e))})`);
+  if (giveOrder(e, kind, i, extra) && e.path.length) toast(`${isScout(e) ? '🔭' : isFleet(e) ? '⚓' : '⚔️'} ${e.name}: ${kind === 'move' ? 'moving' : kind} → ${hexName(i)} (ETA ${fmtTime(etaOf(e))})`);
 }
 function resetView() {
   UI.selected = null; UI.placing = null; UI.worldSel = -1; UI.selEntity = null; UI.selHex = -1;
@@ -238,13 +260,11 @@ function bindInput() {
     if (t && !t.disabled && ACTIONS[t.dataset.action]) { ACTIONS[t.dataset.action](t.dataset.arg); UI.panelDirty = true; renderPanel(true); updateHud(); }
     const tab = e.target.closest('[data-tab]'); if (tab) setTab(tab.dataset.tab);
     const view = e.target.closest('[data-view]'); if (view) setView(view.dataset.view);
-    const bs = e.target.closest('[data-bspeed]');
-    if (bs) { Battle.speed = +bs.dataset.bspeed; document.querySelectorAll('[data-bspeed]').forEach((x) => x.classList.toggle('active', x === bs)); }
-    if (e.target.id === 'battle-skip') Battle.skip();
-    if (e.target.id === 'battle-close') Battle.close();
     if (e.target === el('modal') && S.started) closeModal();
   });
   el('panel').addEventListener('pointerdown', () => { UI.pointerDown = true; });
+  el('battle-hud').addEventListener('pointerdown', () => { UI.hudPointer = true; });
+  window.addEventListener('pointerup', () => setTimeout(() => { UI.hudPointer = false; }, 0));
   window.addEventListener('pointerup', () => setTimeout(() => { UI.pointerDown = false; }, 0));
   document.addEventListener('input', (e) => {
     const d = e.target.dataset;
@@ -259,7 +279,16 @@ function bindInput() {
       saveSettings();
       if (d.setting === 'minimap') el('minimap').hidden = UI.view !== 'world' || !SETTINGS.minimap;
     }
-    if (d.assign) { const [k, id] = e.target.value.split(':'); if (k === 'none') unassignGeneral(d.assign); else assignGeneral(d.assign, k, id); UI.panelDirty = true; e.target.blur(); renderPanel(true); }
+    if (d.assign) { const [k, id] = e.target.value.split(':'); assignGeneral(d.assign, k, id); UI.panelDirty = true; e.target.blur(); renderPanel(true); }
+    if (d.divgen) {
+      const div = S.divisions.find((x) => x.id === d.divgen), uidv = e.target.value, post = generalPost(uidv);
+      if (post.kind === 'division') { const other = S.divisions.find((x) => x.id === post.id); [other.general, div.general] = [div.general, uidv]; }
+      else { unassignGeneral(uidv, true); div.general = uidv; }
+      toast(`${generalData(uidv).name} now leads ${div.name}`, 'good'); e.target.blur(); UI.panelDirty = true; renderPanel(true);
+    }
+    for (const [attr, field] of [['entform', 'formation'], ['entstance', 'stance'], ['enttarget', 'target']]) if (d[attr]) { const ent = findEnt(d[attr]); if (ent) ent[field] = e.target.value; e.target.blur(); }
+    if (d.btarget) { const [id, gi] = d.btarget.split(':'); const b = Battles.get(+id); if (b) Battles.setTarget(b, +gi, e.target.value); e.target.blur(); }
+    if (d.setting === 'graphics') { worldVersion++; UI.lastPanelHtml = ''; }
   });
   document.addEventListener('keydown', (e) => {
     const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
@@ -365,13 +394,17 @@ function handleClick(p, button) {
   } else {
     const i = WG.at(wx, wy);
     // did we click one of our banners/ships?
-    const hit = S.divisions.concat(S.fleets).map((e) => { const [x, y] = entPos(e); const [sx, sy] = cam.toScreen(x, y - 8); return [e, dist(sx, sy, p.x, p.y)]; }).filter(([, d]) => d < 22).sort((a, b) => a[1] - b[1])[0];
+    const hit = S.divisions.filter((d) => d.status !== 'fighting').concat(S.fleets, S.scouts).map((e) => { const [x, y] = entPos(e); const [sx, sy] = cam.toScreen(x, y - 8); return [e, dist(sx, sy, p.x, p.y)]; }).filter(([, d]) => d < 22).sort((a, b) => a[1] - b[1])[0];
     const sel = selectedEntity();
-    if (button === 2 && sel && i >= 0) {
+    const kindOf = (e) => (isScout(e) ? 'scout' : isFleet(e) ? 'fleet' : 'division');
+    if (button === 0 && sel && isScout(sel) && i >= 0 && (!hit || hit[0] === sel)) {
+      UI.worldSel = i;
+      if (i !== sel.at) issueOrder(sel, 'move', i);
+    } else if (button === 2 && sel && i >= 0) {
       const o = ordersFor(sel, i), best = o.find(([k]) => k !== 'move') || o[0];
       UI.worldSel = i;
       if (best) issueOrder(sel, best[0], i); else toast('No valid order for that hex', 'bad');
-    } else if (hit && button === 0) { UI.selEntity = { kind: isFleet(hit[0]) ? 'fleet' : 'division', id: hit[0].id }; setTab('info'); }
+    } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; setTab('info'); }
     else if (button === 0) { UI.worldSel = i; setTab('info'); }
   }
   renderPanel(true);

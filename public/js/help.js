@@ -27,6 +27,8 @@ const HELP = [
       <tr><td><kbd>Esc</kbd></td><td>Cancel placement / deselect / close dialogs</td></tr>
       <tr><td><kbd>H</kbd> or <kbd>?</kbd></td><td>This help guide</td></tr>
     </table>
+    <h4>Graphics quality</h4>
+    <p>⚙️ Settings → <b>Graphics quality</b> switches instantly between <b>✨ High</b>, <b>🎨 Classic</b> and <b>🔷 Low-poly</b>. High has realistic procedural textures (grass blades, meadow flowers, forest litter, rock, sand ripples, snow), hill-shading, animated water with sun glints, and drifting cloud shadows. Classic uses flat colours. Low-poly draws every hex as flat-shaded facets and is the fastest option on weak devices.</p>
     <p>Open <b>⚙️ Settings</b> in the top bar to choose how the camera moves: <b>Drag</b>, <b>Keyboard</b> or <b>Both</b>. You can also invert dragging, turn on edge scrolling, change the zoom speed and toggle the minimap. On the World map, click or drag the <b>minimap</b> in the corner to jump anywhere.</p>` },
   { id: 'kingdom', icon: '🏰', title: 'Kingdom & buildings', html: `
     <p>Your kingdom is a hex map around the <b>Main Hall</b>. The glowing golden hexagon is your land, and the faint dashed ring shows where the next Hall level will expand it. The sea lies to the east, and coastal buildings (Port, Shipyard) must touch it.</p>
@@ -60,9 +62,10 @@ const HELP = [
       ${Object.entries(UNITS).map(([k, u]) => `<tr><td>${u.icon} ${u.name}</td><td>${BUILDINGS[u.from].name}</td><td>${u.vs ? Object.entries(u.vs).map(([v, m]) => `×${m} vs ${(UNITS[v] || { name: 'towers' }).name}`).join(', ') : k === 'scout' ? 'Explores and spies' : '—'}${u.research ? ' · needs ' + RESEARCH[u.research].name : ''}</td></tr>`).join('')}</table>
     <h4>Divisions</h4>
     <ul>
-      <li>Click <b>Muster a new division</b>, name it, choose troops with the sliders and pick a general.</li>
+      <li>Click <b>Muster a new division</b>, name it, choose troops with the sliders, pick its <b>general (required, one per division)</b> and its default battle plan.</li>
+      <li><b>Station divisions to protect land.</b> An idle division guards its hex and the six around it (dashed gold ring). Enemy armies that come close must fight it first.</li>
       <li>Divisions appear as <b>banners</b> on the World map. Select one (click the banner, or use Select in the Army tab), then click any hex to see its <b>orders</b>:
-        <b>March</b>, <b>Assault</b> an enemy capital, <b>Invade</b> an enemy hex, <b>Explore</b> ruins or caves, <b>Capture</b> a fort, <b>March & claim</b> neutral land, or <b>Intercept</b> an enemy army.</li>
+        <b>March</b>, <b>Station & guard</b>, <b>Assault</b> an enemy capital, <b>Invade</b> an enemy hex, <b>Explore</b> ruins or caves, <b>Capture</b> a fort, or <b>Intercept</b> an enemy army. Idle divisions next to a fight join it automatically.</li>
       <li>Right-click a hex to give the default order instantly. The route is drawn as a dashed line with an ETA.</li>
       <li>Terrain matters: forests, hills and swamps are slow, and <b>mountains are impassable</b>. To cross water, divisions board transport ships automatically if your Cogs and Galleons have enough capacity.</li>
       <li>Divisions back at the capital can be <b>reinforced</b> or <b>disbanded</b>. They also help defend the capital while they're home.</li>
@@ -71,15 +74,17 @@ const HELP = [
   { id: 'generals', icon: '🎖️', title: 'Generals & items', html: `
     <p>Generals have <b>Attack, Health and Speed</b> ratings (the bars) that boost the troops they lead. <b>Specialists</b> add +15% to one unit type, and <b>Admirals</b> (⚓) add +15% to ships.</p>
     <ul>
-      <li>In the <b>🎖️ Generals</b> tab, set each general's <b>Post</b>: a division, a fleet, or <b>Castellan</b> (leads the home garrison).</li>
-      <li>You start with Sir Aldric. Find more in <b>Mystery Boxes</b>, rarely in <b>ruins</b>, and from destroyed <b>pirate coves</b>.</li>
-      <li>Duplicates add ★ stars (+10% stats each, max 5★).</li>
+      <li><b>Every division needs its own general</b>, and a general can hold only <b>one post</b>: a division, a fleet (optional admiral), or <b>Castellan</b> (leads the home garrison).</li>
+      <li>You can <b>own several copies</b> of the same general. Each copy can lead a different division.</li>
+      <li><b>Promote:</b> merge an idle spare copy into a general for +★ (+10% stats each, max 5★).</li>
+      <li>Swap commanders from the division card (General dropdown) or the Generals tab.</li>
+      <li>Get generals from the <b>🍺 Tavern</b> in the Shop (🪙900), <b>Mystery Boxes</b>, <b>ruins</b> and destroyed <b>pirate coves</b>.</li>
     </ul>
     <h4>Items</h4><ul>${Object.values(ITEMS).map((i) => `<li>${i.icon} <b>${i.name}</b>: ${i.desc}</li>`).join('')}</ul>` },
   { id: 'navy', icon: '⚓', title: 'Navy & fleets', html: `
-    <p>Build a <b>Shipyard</b> on the coast (Main Hall 2), then build ships from the <b>⚓ Navy</b> tab. Higher shipyard levels unlock bigger ships.</p>
+    <p>Build a <b>Port</b> and a <b>Shipyard</b> on the coast (Main Hall 2). Every ship needs a crew of <b>🧑‍✈️ Seamen</b>, which you train at the Port. Then build ships from the <b>⚓ Navy</b> tab. Higher shipyard levels unlock bigger ships, up to the mighty <b>Man o' War</b> at Shipyard level 6.</p>
     <table class="keys"><tr><th>Ship</th><th>Shipyard</th><th>Role</th></tr>
-      ${Object.values(SHIPS).map((s) => `<tr><td>${s.icon} ${s.name}</td><td>L${s.lvl}</td><td>${s.desc}</td></tr>`).join('')}</table>
+      ${Object.values(SHIPS).map((s) => `<tr><td>${s.icon} ${s.name}</td><td>L${s.lvl}</td><td>${s.desc} Crew ${s.crew}.</td></tr>`).join('')}</table>
     <ul>
       <li>New ships wait in the <b>home harbour</b>, where they guard your port against pirates. <b>Form a fleet</b> to send them out, with an admiral if you have one.</li>
       <li>Select a fleet on the World map to: <b>Sail</b>, <b>Salvage</b> shipwrecks, <b>Attack pirate coves</b>, <b>Blockade</b> a coastal kingdom (sink its navy and plunder its harbour), or <b>Hunt</b> enemy fleets.</li>
@@ -92,14 +97,24 @@ const HELP = [
     <h4>Points of interest</h4>
     <ul>${Object.values(FEATURES).map((f) => `<li>${f.icon} <b>${f.name}</b>: ${f.desc}</li>`).join('')}</ul>
     <h4>Fog of war & scouting</h4>
-    <p>Unexplored land is hidden. Click any hex → <b>Send scouts</b>. They travel there, reveal a wide area, explore caves and gather <b>intel</b> on nearby kingdoms. Divisions and fleets also reveal hexes as they move. Scout Lodge levels and Cartography increase vision.</p>
+    <p>Unexplored land is hidden. <b>Scouts are units you move:</b> Army tab (or Map panel) → <b>Dispatch scouts</b>, then pan the map and <b>click any point</b>. The party walks there, and <b>every hex it passes is revealed</b>, along with a radius around it. Scouts also explore caves and gather <b>intel</b> on kingdoms they pass. Click a party's banner to select it again and send it somewhere new, or order it home. Enemy land may capture scouts. Divisions and fleets also reveal hexes as they move. The Scout Lodge and Cartography extend sight.</p>
     <h4>Territory</h4>
-    <p>Your borders are hexagonal and gold. <b>Claim</b> neutral hexes next to your land (the cost rises with size), or march a division anywhere and choose <b>March & claim</b>. Captured forts become <b>outposts</b> that let you claim within 2 hexes of them. The territory limit grows with the Main Hall and Administration.</p>` },
+    <p>Your borders are hexagonal and gold. Click any explored neutral hex → <b>Claim</b>. It works <b>anywhere</b>, and the further it is from your borders the more it costs. <b>Beware:</b> raiders target your <b>undefended</b> hexes, meaning no stationed division and no watchtower or fortress. Undefended land can be pillaged, burned or annexed. The territory limit grows with the Main Hall and Administration.</p>` },
+  { id: 'territory', icon: '🏘️', title: 'Building on your land', html: `
+    <p>Every hex you own outside the capital can hold <b>one building</b> (levels 1–3). Click the hex on the World map → <b>Build here</b>:</p>
+    <table class="keys"><tr><th>Building</th><th>Does</th></tr>${Object.values(TERRITORY_BUILDINGS).map((b) => `<tr><td>${b.icon} ${b.name}</td><td>${b.desc}</td></tr>`).join('')}</table>
+    <p>Buildings are lost if the hex is taken. Watchtowers and Fortresses make a hex <b>defended</b>, and their towers fight in any raid on it.</p>` },
   { id: 'combat', icon: '🛡️', title: 'Combat, raids & defense', html: `
     <ul>
-      <li>Battles are simulated with squads, arrows, cannonballs and towers. By default you <b>watch</b> them (1×/2×/4× or Skip), and in Settings you can switch to <b>auto-resolve</b>.</li>
+      <li><b>Battles happen right on the map</b> where the armies meet, with no separate screen. The camera jumps there (optional) and a <b>command bar</b> appears at the bottom.</li>
+      <li>Each of your divisions is its own group. For each one, choose:
+        <ul>${Object.values(FORMATIONS).map((f) => `<li>${f.icon} <b>${f.name}</b>: ${f.desc}</li>`).join('')}</ul>
+        <b>Stance:</b> ${Object.values(STANCES).map((st) => `${st.icon} <b>${st.name}</b> (${st.desc.toLowerCase()})`).join('; ')}.
+        <br><b>Target priority:</b> nearest, weakest, archers & siege, cavalry, or towers.</li>
+      <li>Set each division's default <b>battle plan</b> on its card. The enemy picks formations to counter yours, for example a Square against cavalry or Skirmish against archers.</li>
+      <li>Bring several divisions: idle divisions within one hex of the fight join as separate groups, so you can flank and combine arms. <b>Auto-resolve</b> finishes a fight instantly, and Settings can auto-resolve every battle.</li>
       <li><b>Counters:</b> Pikemen crush cavalry, Horsemen ride down archers and catapults, Archers shred pikemen, Swordsmen beat archers up close, and Catapults smash towers.</li>
-      <li><b>Raids:</b> hostile kingdoms send armies that march across the map. You get a red ⚠ alert with an ETA. <b>Intercept</b> them with a division, or let your garrison, towers, walls and home divisions defend when they arrive. If they win, they plunder resources and may take a border hex.</li>
+      <li><b>Raids:</b> hostile kingdoms send armies at your <b>weakest land</b>, usually undefended outlying hexes and sometimes the capital. A red ⚠ alert shows the target and ETA, and the target hex pulses red. Intercept the army, station a division on the target, or build a watchtower or fortress. Undefended targets are pillaged without a fight.</li>
       <li>Towers, Cannons and Arcane Spires fight in defense battles. Walls strengthen them. Masonry and Fortification research help too.</li>
       <li><b>Field Medicine</b> saves part of your casualties. War Horns and Healing Salves boost your next battle.</li>
       <li>Winning an assault on a capital loots its treasury and can seize border hexes.</li>

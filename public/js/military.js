@@ -5,11 +5,12 @@
 'use strict';
 
 const INFANTRY = ['archer', 'swordsman', 'pikeman'];
-const emptyArmy = () => ({ archer: 0, swordsman: 0, pikeman: 0, horseman: 0, catapult: 0, scout: 0 });
-const emptyFleet = () => ({ sloop: 0, cog: 0, galley: 0, frigate: 0, galleon: 0 });
+const emptyArmy = () => ({ archer: 0, swordsman: 0, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 });
+const emptyFleet = () => ({ sloop: 0, cog: 0, galley: 0, frigate: 0, galleon: 0, manowar: 0 });
 const armyHousing = (units) => Object.entries(units || {}).reduce((s, [k, n]) => s + (UNITS[k] ? UNITS[k].housing * n : 0), 0);
+const scoutsAfield = () => (S.scouts || []).reduce((s, p) => s + p.n, 0);
 const queuedHousing = () => S.buildings.reduce((s, b) => s + (b.queue && BUILDINGS[b.type].trains ? b.queue.reduce((q, u) => q + UNITS[u].housing, 0) : 0), 0);
-const totalHousing = () => armyHousing(S.army) + S.divisions.reduce((s, d) => s + armyHousing(d.units), 0) + queuedHousing();
+const totalHousing = () => armyHousing(S.army) + S.divisions.reduce((s, d) => s + armyHousing(d.units), 0) + queuedHousing() + scoutsAfield();
 const armyCap = () => 10 + 15 * hallLevel() + S.buildings.filter((b) => BUILDINGS[b.type].trains).reduce((s, b) => s + 3 * b.level, 0);
 const queueLimit = (b) => 5 + 5 * b.level;
 const trainerOf = (u) => S.buildings.filter((b) => b.type === UNITS[u].from && b.level > 0).sort((a, b) => b.level - a.level)[0];
@@ -26,48 +27,92 @@ const transportCapacity = () => { const s = allShips(); return SHIP_TYPES.reduce
 const divisionLimit = () => 2 + Math.floor(hallLevel() / 2);
 const fleetLimit = () => 1 + countOf('shipyard') + Math.floor(hallLevel() / 3);
 
-/* ---- Generals ---- */
-const generalData = (id) => GENERALS.find((g) => g.id === id);
-const ownedGeneral = (id) => S.generals.find((g) => g.id === id);
-function generalStats(id) {
-  const g = generalData(id), o = ownedGeneral(id) || { stars: 1 };
+/* ---- Generals ----
+   You own general *instances* ({uid, id, stars}); several copies of the same
+   general are allowed. Each instance can hold exactly one post: a division, a
+   fleet, or Castellan of the capital. Every division must have a general. */
+const genInst = (uid) => S.generals.find((g) => g.uid === uid);
+const generalData = (uidOrId) => { const i = genInst(uidOrId); return GENERALS.find((g) => g.id === (i ? i.id : uidOrId)); };
+const ownedGeneral = genInst;
+function generalStats(uid) {
+  const g = generalData(uid), o = genInst(uid) || { stars: 1 };
   const m = 1 + 0.1 * (o.stars - 1);
   return { atk: Math.min(100, Math.round(g.atk * m)), hp: Math.min(100, Math.round(g.hp * m)), spd: Math.min(100, Math.round(g.spd * m)) };
 }
-function generalMult(id, kind) {
-  if (!id || !ownedGeneral(id)) return { atk: 1, hp: 1, spd: 1 };
-  const gs = generalStats(id), g = generalData(id);
+function generalMult(uid, kind) {
+  if (!uid || !genInst(uid)) return { atk: 1, hp: 1, spd: 1 };
+  const gs = generalStats(uid), g = generalData(uid);
   const spec = g.spec && (g.spec === kind || (g.spec === 'fleet' && SHIPS[kind])) ? 0.15 : 0;
   return { atk: 1 + gs.atk / 200 + spec, hp: 1 + gs.hp / 200 + spec, spd: 1 + gs.spd / 400 };
 }
-function generalPost(id) {
-  if (S.castellan === id) return { kind: 'castellan', label: '🏰 Castellan (home defense)' };
-  const d = S.divisions.find((x) => x.general === id);
+function generalPost(uid) {
+  if (S.castellan === uid) return { kind: 'castellan', label: '🏰 Castellan (home defense)' };
+  const d = S.divisions.find((x) => x.general === uid);
   if (d) return { kind: 'division', id: d.id, label: `⚔️ ${d.name}` };
-  const f = S.fleets.find((x) => x.general === id);
+  const f = S.fleets.find((x) => x.general === uid);
   if (f) return { kind: 'fleet', id: f.id, label: `⚓ ${f.name}` };
   return { kind: 'none', label: 'Idle' };
 }
-function unassignGeneral(id) {
-  if (S.castellan === id) S.castellan = null;
-  S.divisions.forEach((d) => { if (d.general === id) d.general = null; });
-  S.fleets.forEach((f) => { if (f.general === id) f.general = null; });
+const idleGenerals = () => S.generals.filter((g) => generalPost(g.uid).kind === 'none');
+const copiesOf = (id) => S.generals.filter((g) => g.id === id);
+function unassignGeneral(uid, force) {
+  const post = generalPost(uid);
+  if (post.kind === 'division' && !force) { toast('Every division needs a general — assign a replacement from the division card', 'bad'); return false; }
+  if (S.castellan === uid) S.castellan = null;
+  S.divisions.forEach((d) => { if (d.general === uid) d.general = null; });
+  S.fleets.forEach((f) => { if (f.general === uid) f.general = null; });
+  return true;
 }
-function assignGeneral(id, kind, targetId) {
-  if (!ownedGeneral(id)) return;
-  unassignGeneral(id);
-  if (kind === 'castellan') { S.castellan = id; }
-  else if (kind === 'division') { const d = S.divisions.find((x) => x.id === targetId); if (d) { d.general = id; } }
-  else if (kind === 'fleet') { const f = S.fleets.find((x) => x.id === targetId); if (f) { f.general = id; } }
+// Put general `uid` on a post. A general leading a division can only leave it by
+// being swapped with another general (the division is never left leaderless).
+function assignGeneral(uid, kind, targetId) {
+  if (!genInst(uid)) return false;
+  const cur = generalPost(uid);
+  if (cur.kind === kind && (cur.id === targetId || kind === 'castellan')) return true;
+  if (kind === 'none') return unassignGeneral(uid) && (UI.panelDirty = true);
+  if (cur.kind === 'division') {
+    if (kind !== 'division') { toast(`${generalData(uid).name} commands ${S.divisions.find((d) => d.id === cur.id).name}; swap in another general there first`, 'bad'); return false; }
+    // swap generals between two divisions
+    const a = S.divisions.find((d) => d.id === cur.id), b = S.divisions.find((d) => d.id === targetId);
+    if (!b) return false;
+    [a.general, b.general] = [b.general, uid];
+    UI.panelDirty = true;
+    return true;
+  }
+  unassignGeneral(uid, true);
+  if (kind === 'castellan') S.castellan = uid;
+  else if (kind === 'division') { const d = S.divisions.find((x) => x.id === targetId); if (d) d.general = uid; }
+  else if (kind === 'fleet') { const f = S.fleets.find((x) => x.id === targetId); if (f) f.general = uid; }
   UI.panelDirty = true;
+  return true;
 }
 function grantGeneral(id) {
-  const o = ownedGeneral(id), g = generalData(id);
-  if (!o) { S.generals.push({ id, stars: 1 }); return { dup: false }; }
-  if (o.stars < 5) { o.stars++; return { dup: true, stars: o.stars }; }
-  const gold = 400 * RARITY[g.rarity].dupXp;
-  gain({ gold }, true);
-  return { dup: true, max: true, gold };
+  const had = copiesOf(id).length;
+  const inst = { uid: 'g' + (S.nextGen = (S.nextGen || 1) + 1) + uid().slice(0, 3), id, stars: 1 };
+  S.generals.push(inst);
+  return { dup: had > 0, copies: had + 1, uid: inst.uid };
+}
+// Merge an idle spare copy into this general for +1★ (max 5).
+function promoteGeneral(uid) {
+  const g = genInst(uid);
+  if (!g || g.stars >= 5) return false;
+  const spare = S.generals.filter((x) => x.id === g.id && x.uid !== uid && generalPost(x.uid).kind === 'none').sort((a, b) => a.stars - b.stars)[0];
+  if (!spare) { toast('Needs an idle spare copy of this general', 'bad'); return false; }
+  S.generals = S.generals.filter((x) => x !== spare);
+  g.stars = Math.min(5, g.stars + spare.stars);
+  toast(`⭐ ${generalData(uid).name} promoted to ${g.stars}★`, 'good');
+  UI.panelDirty = true;
+  return true;
+}
+const HIRE_COST = { gold: 900 };
+function hireGeneral() {
+  if (!pay(HIRE_COST)) { toast('Hiring a general costs 🪙900', 'bad'); return null; }
+  const g = pick(GENERALS.filter((x) => x.rarity === (Math.random() < 0.15 ? 'rare' : 'common')));
+  grantGeneral(g.id);
+  log(`Hired ${g.name} at the tavern.`, 'good');
+  toast(`🍺 ${g.icon} ${g.name} joins your court`, 'good');
+  UI.panelDirty = true;
+  return g;
 }
 
 /* ---- Stats ---- */
@@ -141,12 +186,14 @@ function cancelQueue(b) {
   const x = b.queue.pop();
   if (!x) return;
   gain(UNITS[x] ? UNITS[x].cost : shipCost(x));
+  if (SHIPS[x]) S.army.seaman += SHIPS[x].crew;
   if (!b.queue.length) b.trainLeft = 0;
   UI.panelDirty = true;
 }
 function shipError(t) {
   if (!countOf('shipyard') || shipyardLevel() < 1) return 'Build a Shipyard on the coast first';
   if (shipyardLevel() < SHIPS[t].lvl) return `Requires a level ${SHIPS[t].lvl} Shipyard`;
+  if (S.army.seaman < SHIPS[t].crew) return `Needs a crew of ${SHIPS[t].crew} Seamen (you have ${S.army.seaman}) — train them at the Port`;
   return null;
 }
 function buildShips(t, n) {
@@ -158,7 +205,9 @@ function buildShips(t, n) {
     const b = yards.sort((a, c) => a.queue.length - c.queue.length)[0];
     if (b.queue.length >= 3 + 2 * b.level) { if (!made) toast('Shipyard queue is full', 'bad'); break; }
     if (shipCount(allShips()) + queuedShips() >= navalCap()) { if (!made) toast('Naval capacity reached — upgrade your shipyards', 'bad'); break; }
+    if (S.army.seaman < SHIPS[t].crew) { if (!made) toast(`Needs ${SHIPS[t].crew} Seamen`, 'bad'); break; }
     if (!pay(shipCost(t))) { if (!made) toast('Not enough resources', 'bad'); break; }
+    S.army.seaman -= SHIPS[t].crew;
     if (!b.queue.length) b.trainLeft = shipTime(t);
     b.queue.push(t);
     made++;
@@ -182,15 +231,17 @@ function stepQueue(b, dt) {
 /* ---- Divisions & fleets ---- */
 function createDivision(name, units, gid) {
   if (S.divisions.length >= divisionLimit()) { toast(`Division limit (${divisionLimit()}) — upgrade the Main Hall`, 'bad'); return null; }
+  if (!gid || !genInst(gid) || generalPost(gid).kind !== 'none') { toast('Every division needs its own idle general — hire one at the Tavern (Shop tab) or free one up', 'bad'); return null; }
   const take = {};
-  for (const u of Object.keys(UNITS)) take[u] = Math.min(units[u] || 0, S.army[u] || 0);
+  for (const u of Object.keys(UNITS)) if (u !== 'seaman') take[u] = Math.min(units[u] || 0, S.army[u] || 0);
   if (armyHousing(take) <= 0) { toast('A division needs at least one soldier', 'bad'); return null; }
   for (const u of Object.keys(take)) S.army[u] -= take[u];
   const d = { id: 'd' + uid(), name: (name || '').trim().slice(0, 24) || `Division ${S.divisions.length + 1}`,
     color: DIVISION_COLORS[S.divisions.length % DIVISION_COLORS.length], units: { ...emptyArmy(), ...take },
-    general: null, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle' };
+    general: null, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle', formation: 'line', stance: 'advance', target: 'nearest' };
   S.divisions.push(d);
-  if (gid) assignGeneral(gid, 'division', d.id);
+  unassignGeneral(gid, true);
+  d.general = gid;
   log(`${d.name} was mustered (${armyHousing(take)} troops).`, 'good');
   UI.panelDirty = true;
   return d;
@@ -199,6 +250,7 @@ const atHome = (d) => d.at === S.world.capital && !d.path.length;
 function disbandDivision(d) {
   if (!atHome(d)) { toast('Divisions can only disband at the capital', 'bad'); return; }
   for (const u of Object.keys(d.units)) S.army[u] += d.units[u];
+  d.general = null;
   S.divisions = S.divisions.filter((x) => x !== d);
   if (UI.selEntity && UI.selEntity.id === d.id) UI.selEntity = null;
   log(`${d.name} disbanded into the garrison.`, 'info');
@@ -216,14 +268,14 @@ function createFleet(name, ships, gid) {
   if (shipCount(take) <= 0) { toast('A fleet needs at least one ship', 'bad'); return null; }
   for (const t of SHIP_TYPES) S.harbor[t] -= take[t];
   const f = { id: 'f' + uid(), name: (name || '').trim().slice(0, 24) || `Fleet ${S.fleets.length + 1}`, ships: { ...emptyFleet(), ...take },
-    general: null, at: S.world.harbor, path: [], prog: 0, order: null, status: 'idle' };
+    general: null, at: S.world.harbor, path: [], prog: 0, order: null, status: 'idle', formation: 'line', stance: 'advance', target: 'nearest' };
   S.fleets.push(f);
   if (gid) assignGeneral(gid, 'fleet', f.id);
   log(`${f.name} set sail with ${shipCount(take)} ships.`, 'good');
   UI.panelDirty = true;
   return f;
 }
-const fleetHome = (f) => f.at === S.world.harbor && !f.path.length;
+const fleetHome = (f) => !f.path.length && (f.at === S.world.harbor || dockAt(f.at) >= 0);
 function disbandFleet(f) {
   if (!fleetHome(f)) { toast('Fleets can only disband in the home harbor', 'bad'); return; }
   for (const t of SHIP_TYPES) S.harbor[t] += f.ships[t];
@@ -265,7 +317,7 @@ function rollBox(box) {
   if (kind === 'general') {
     const rarity = weighted(box.rarity);
     const g = pick(GENERALS.filter((x) => x.rarity === rarity));
-    return { kind, rarity, general: g, ...grantGeneral(g.id) };
+    return { kind, rarity, general: g, ...grantGeneral(g.id) };  // duplicates become extra copies
   }
   const tier = box.resScale >= 10 ? 'epic' : box.resScale >= 4 ? 'rare' : 'common';
   if (kind === 'item') {
@@ -290,7 +342,7 @@ function openBox(id) {
   return reward;
 }
 function rewardText(r) {
-  if (r.kind === 'general') return `${RARITY[r.rarity].name} general ${r.general.name}` + (r.max ? ` (max stars → +${r.gold} gold)` : r.dup ? ` (duplicate → ${r.stars}★)` : '');
+  if (r.kind === 'general') return `${RARITY[r.rarity].name} general ${r.general.name}` + (r.dup ? ` (you now own ${r.copies} copies)` : '');
   if (r.kind === 'item') return `${r.qty}× ${ITEMS[r.item].name}`;
   return Object.entries(r.bundle).map(([k, v]) => `${RES_META[k].icon}${fmt(v)}`).join(' ');
 }

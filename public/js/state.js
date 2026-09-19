@@ -36,7 +36,9 @@ const DEFAULT_SETTINGS = {
   showGrid: true,
   prodNumbers: true,
   particles: true,
-  battleMode: 'watch',    // 'watch' | 'auto'
+  battleMode: 'watch',    // 'watch' = fought live on the map, 'auto' = resolved instantly
+  focusBattles: true,     // camera jumps to battles as they start
+  graphics: 'high',       // 'high' (textured) | 'medium' (classic) | 'low' (low-poly)
   minimap: true,
 };
 let SETTINGS = { ...DEFAULT_SETTINGS };
@@ -50,10 +52,10 @@ function newGame(name) {
     time: 0, savedAt: Date.now(), started: false,
     res: { gold: 1000, iron: 350, diamonds: 25, lumber: 850, food: 600 },
     buildings: [], nextId: 1, cleared: [],
-    army: { archer: 8, swordsman: 6, pikeman: 0, horseman: 0, catapult: 0, scout: 3 },
-    harbor: { sloop: 0, cog: 0, galley: 0, frigate: 0, galleon: 0 },
-    divisions: [], fleets: [], research: {},
-    generals: [{ id: 'aldric', stars: 1 }], castellan: 'aldric',
+    army: { archer: 8, swordsman: 6, pikeman: 0, horseman: 0, catapult: 0, scout: 4, seaman: 0 },
+    harbor: { sloop: 0, cog: 0, galley: 0, frigate: 0, galleon: 0, manowar: 0 },
+    divisions: [], fleets: [], scouts: [], research: {},
+    generals: [{ uid: 'g1', id: 'aldric', stars: 1 }, { uid: 'g2', id: 'bran', stars: 1 }], castellan: null, nextGen: 3,
     items: { warhorn: 1, salve: 0, hammer: 1, scroll: 0, map: 0, winds: 0, shield: 0 },
     boosts: { warhorn: false, salve: false }, shield: 0, winds: 0,
     world: null, kingdoms: [], aiArmies: [], aiFleets: [], missions: [], intel: {},
@@ -70,7 +72,7 @@ function newGame(name) {
   generateWorld();
   createAlliances();
   // Starting division so the world map is alive from minute one.
-  createDivision('1st Legion', { archer: 4, swordsman: 4 }, null, true);
+  createDivision('1st Legion', { archer: 4, swordsman: 4 }, 'g1');
   log('Your reign begins. Build up your kingdom, then explore the world map.', 'info');
 }
 
@@ -92,10 +94,33 @@ function load() {
       return false;
     }
     S = data;
+    migrate();
     deriveKingdom();
     deriveWorld();
     return true;
   } catch { return false; }
+}
+
+// Bring older v2 saves up to date (v2.0 → v2.1).
+function migrate() {
+  S.scouts = S.scouts || [];
+  S.harbor.manowar = S.harbor.manowar || 0;
+  for (const f of S.fleets) f.ships.manowar = f.ships.manowar || 0;
+  // generals became instances (you may own several copies of one general)
+  if (S.generals.length && !S.generals[0].uid) {
+    S.generals.forEach((g) => { g.uid = 'g_' + g.id; });
+    if (S.castellan) S.castellan = 'g_' + S.castellan;
+    S.divisions.forEach((d) => { if (d.general) d.general = 'g_' + d.general; });
+    S.fleets.forEach((f) => { if (f.general) f.general = 'g_' + f.general; });
+    S.nextGen = 1;
+  }
+  S.world.bld = S.world.bld || {};
+  S.army.seaman = S.army.seaman || 0;
+  for (const m of S.missions || []) S.army.scout += m.n;   // old scout missions → scouts come home
+  S.missions = [];
+  for (const d of S.divisions) { d.formation = d.formation || 'line'; d.stance = d.stance || 'advance'; d.target = d.target || 'nearest'; if (d.status === 'fighting') d.status = 'idle'; }
+  for (const f of S.fleets) { f.formation = f.formation || 'line'; f.stance = f.stance || 'advance'; f.target = f.target || 'nearest'; if (f.status === 'fighting') f.status = 'idle'; }
+  for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex == null) a.targetHex = S.world.capital;
 }
 
 // Offline progress: simulate time the tab was closed (capped, no raids).

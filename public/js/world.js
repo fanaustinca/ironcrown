@@ -55,7 +55,7 @@ function generateWorld() {
     else t = T.PLAINS;
     terrain[i] = t;
   }
-  S.world = { terrain, owner: new Array(N).fill(-1), seen: new Array(N).fill(0), feat: {}, capital: -1, harbor: -1 };
+  S.world = { terrain, owner: new Array(N).fill(-1), seen: new Array(N).fill(0), feat: {}, bld: {}, capital: -1, harbor: -1 };
   deriveWorld();
 
   // --- Player capital: coastal, roomy, western half ---
@@ -153,17 +153,21 @@ const playerTiles = () => S.world.owner.reduce((s, o) => s + (o === -2 ? 1 : 0),
 const kingdomTiles = (id) => S.world.owner.reduce((s, o) => s + (o === id ? 1 : 0), 0);
 const visionBonus = () => R('cartography');
 
-function claimCost() {
-  const n = Math.max(0, playerTiles() - 7);
-  return { gold: Math.round(150 * Math.pow(1.14, n) / 5) * 5, food: Math.round(80 * Math.pow(1.1, n) / 5) * 5 };
+function distToTerritory(i) {
+  let best = 99;
+  const { owner } = S.world;
+  for (let j = 0; j < owner.length; j++) if (owner[j] === -2) { const d = WG.dist(i, j); if (d < best) best = d; }
+  return best;
 }
-function nearOutpost(i) {
-  const { feat, owner } = S.world;
-  return Object.keys(feat).some((k) => feat[k].type === 'fort' && feat[k].captured && owner[k] === -2 && WG.dist(+k, i) <= 2);
+// Claim any explored land anywhere; the further from your borders, the pricier.
+function claimCost(i) {
+  const n = Math.max(0, playerTiles() - 7), far = i != null ? Math.max(0, distToTerritory(i) - 1) : 0;
+  const m = 1 + 0.2 * far;
+  return { gold: Math.round((150 * Math.pow(1.14, n) * m) / 5) * 5, food: Math.round((80 * Math.pow(1.1, n) * m) / 5) * 5 };
 }
-function claimError(i, viaDivision) {
+function claimError(i) {
   const { terrain, owner } = S.world;
-  if (!isSeen(i)) return 'Scout this land first';
+  if (!isSeen(i)) return 'Explore this land first (scouts, fleets or divisions)';
   if (terrain[i] === T.WATER) return 'You cannot claim the open sea';
   if (terrain[i] === T.MOUNTAIN) return 'Mountains cannot be settled';
   if (owner[i] === -2) return 'Already yours';
@@ -172,15 +176,14 @@ function claimError(i, viaDivision) {
   const f = S.world.feat[i];
   if (f && f.type === 'fort' && !f.captured) return 'Capture the fort with a division';
   if (f && f.type === 'ruins' && !f.looted) return 'Explore the ruins with a division first';
-  const adjacent = WG.neighbors(i).some((n) => owner[n] === -2) || nearOutpost(i);
-  if (!adjacent && !viaDivision) return 'Must border your territory — or march a division here and claim from there';
-  if (!canAfford(claimCost())) return 'Not enough resources';
+  if (f && f.type === 'cove' && !f.destroyed) return 'Destroy the pirate cove first';
+  if (!canAfford(claimCost(i))) return 'Not enough resources';
   return null;
 }
-function claimTile(i, viaDivision) {
-  const err = claimError(i, viaDivision);
+function claimTile(i) {
+  const err = claimError(i);
   if (err) { toast(err, 'bad'); return false; }
-  pay(claimCost());
+  pay(claimCost(i));
   S.world.owner[i] = -2;
   reveal(i, 1);
   const t = TERRAIN[S.world.terrain[i]];
@@ -191,41 +194,43 @@ function claimTile(i, viaDivision) {
   return true;
 }
 
-/* ---- Scouting ---- */
-function scoutTime(i, n) { return Math.round(3 + WG.dist(S.world.capital, i) * 1.1 / (UNITS.scout.speed / 2.4) / (1 + 0.05 * n)); }
-function sendScouts(i, n) {
+/* ---- Scouting: scout parties are units you move on the map ----
+   Every hex they pass through (and a radius around it) is revealed. */
+const scoutRadius = () => { const lodge = S.buildings.find((b) => b.type === 'scoutlodge' && b.level > 0); return 2 + Math.floor((lodge ? lodge.level : 0) / 2) + visionBonus(); };
+const scoutCost = (i) => { const t = S.world.terrain[i]; return t === T.WATER ? (transportCapacity() > 0 ? 1.2 : Infinity) : t === T.MOUNTAIN ? 3 : TERRAIN[t].cost; };
+function dispatchScouts(n, dest) {
   n = Math.min(n, S.army.scout);
-  if (n < 1) { toast('No scouts at home — train some at the Scout Lodge', 'bad'); return false; }
-  const total = scoutTime(i, n);
+  if (n < 1) { toast('No scouts at home — train some at the Scout Lodge', 'bad'); return null; }
   S.army.scout -= n;
-  S.missions.push({ id: uid(), hex: i, n, left: total, total });
-  toast(`🔭 ${n} scout${n > 1 ? 's' : ''} dispatched (${fmtTime(total)})`);
+  const p = { id: 's' + uid(), kind: 'scout', name: `Scouts ×${n}`, n, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle' };
+  S.scouts.push(p);
+  if (dest != null && dest >= 0) giveOrder(p, 'move', dest);
   UI.panelDirty = true;
-  return true;
+  return p;
+}
+function scoutEnter(p) {
+  reveal(p.at, scoutRadius());
+  const f = S.world.feat[p.at];
+  if (f && f.type === 'cave' && !f.explored) { f.explored = true; log(`Scouts found ${MINERALS[f.mineral].name} in a cave!`, 'good'); toast(`🕳️ Scouts found ${MINERALS[f.mineral].name}`, 'good'); }
+  for (const k of S.kingdoms) if (WG.dist(k.capital, p.at) <= scoutRadius() + 1) { if (!S.intel[k.id] || S.time - S.intel[k.id].t > 60) log(`Scouts gathered intel on ${k.name}.`, 'info'); gatherIntel(k); }
+  const o = S.world.owner[p.at];
+  if (o >= 0 && Math.random() < 0.04 * (hostileToPlayer(S.kingdoms[o]) ? 2 : 1) * (1 - 0.25 * R('espionage'))) {
+    p.n--; p.name = `Scouts ×${p.n}`;
+    log(`A scout was captured by ${S.kingdoms[o].name}.`, 'bad');
+    if (p.n <= 0) { S.scouts = S.scouts.filter((x) => x !== p); if (UI.selEntity && UI.selEntity.id === p.id) UI.selEntity = null; toast('🔭 Your scout party was captured', 'bad'); }
+  }
+  S.stats.scouted++;
+}
+function scoutArrive(p) {
+  p.status = 'idle';
+  if (p.at === S.world.capital && p.order && p.order.type === 'return') {
+    S.army.scout += p.n; S.scouts = S.scouts.filter((x) => x !== p);
+    if (UI.selEntity && UI.selEntity.id === p.id) UI.selEntity = null;
+    toast('🔭 Scouts returned home');
+  }
 }
 function gatherIntel(k) {
   S.intel[k.id] = { t: S.time, power: Math.round(k.power), defense: Math.round(k.defense), navy: Math.round(k.navy), hall: k.hall, res: { ...k.res }, tiles: kingdomTiles(k.id) };
-}
-function completeScout(m) {
-  const lodge = S.buildings.find((b) => b.type === 'scoutlodge' && b.level > 0);
-  const r = Math.min(7, 2 + (lodge ? lodge.level : 0) + visionBonus() + Math.floor(m.n / 3));
-  const newly = reveal(m.hex, r);
-  const ownerId = S.world.owner[m.hex];
-  let lost = 0;
-  if (ownerId >= 0) {
-    const k = S.kingdoms[ownerId];
-    const p = clamp(k.defense / (k.defense + 500), 0.05, 0.45) * (1 - 0.25 * R('espionage'));
-    for (let i = 0; i < m.n; i++) if (Math.random() < p) lost++;
-  }
-  S.army.scout += m.n - lost;
-  S.stats.scouted++;
-  const f = S.world.feat[m.hex];
-  if (f && f.type === 'cave' && !f.explored) { f.explored = true; log(`Scouts found ${MINERALS[f.mineral].name} in a cave!`, 'good'); }
-  const reports = [];
-  for (const k of S.kingdoms) if (WG.dist(k.capital, m.hex) <= r + 1 || ownerId === k.id) { gatherIntel(k); reports.push(k.name); }
-  const msg = `Scouts returned from (${WG.col(m.hex)},${WG.row(m.hex)}): ${newly} hexes revealed` + (reports.length ? `, intel on ${reports.join(', ')}` : '') + (lost ? `. ${lost} scout${lost > 1 ? 's were' : ' was'} captured.` : '.');
-  log(msg, lost ? 'bad' : 'good');
-  toast('🔭 ' + msg, lost ? 'bad' : 'good');
 }
 function transferBorderTile(fromId, toId) {
   const { owner } = S.world;
@@ -236,3 +241,77 @@ function transferBorderTile(fromId, toId) {
   }
   return -1;
 }
+
+/* ---- Buildings on territory hexes ---- */
+const tbAt = (i) => S.world.bld[i];
+const tbCost = (type, lvl) => scaleCost(TERRITORY_BUILDINGS[type].cost, Math.pow(1.9, lvl - 1));
+const tbTime = (type, lvl) => Math.round(TERRITORY_BUILDINGS[type].time * Math.pow(lvl, 1.4) * (1 - 0.12 * R('architecture')));
+const hexCoastal = (i) => WG.neighbors(i).some((n) => OCEAN[n]);
+function tbAllowed(type, i) {
+  const t = S.world.terrain[i];
+  return TERRITORY_BUILDINGS[type].on(t, S.world.feat[i], hexCoastal(i));
+}
+function tbError(type, i, upgrade) {
+  if (S.world.owner[i] !== -2) return 'You must own this hex';
+  if (i === S.world.capital) return 'Build in your capital from the Kingdom view';
+  const cur = tbAt(i);
+  if (!upgrade && cur) return 'This hex already has a building';
+  if (upgrade && (!cur || cur.level >= TB_MAX)) return 'Max level';
+  if (cur && cur.build > 0) return 'Under construction';
+  if (!upgrade && !tbAllowed(type, i)) return `Can't build a ${TERRITORY_BUILDINGS[type].name} on ${TERRAIN[S.world.terrain[i]].name}`;
+  if (!canAfford(tbCost(type, upgrade ? cur.level + 1 : 1))) return 'Not enough resources';
+  return null;
+}
+function buildTerritory(type, i) {
+  const upgrade = !!tbAt(i);
+  if (upgrade) type = tbAt(i).type;
+  const err = tbError(type, i, upgrade);
+  if (err) { toast(err, 'bad'); return false; }
+  const lvl = upgrade ? tbAt(i).level + 1 : 1;
+  pay(tbCost(type, lvl));
+  const t = tbTime(type, lvl);
+  if (upgrade) Object.assign(tbAt(i), { build: t, total: t });
+  else S.world.bld[i] = { type, level: 0, build: t, total: t };
+  toast(`${TERRITORY_BUILDINGS[type].icon} ${TERRITORY_BUILDINGS[type].name} ${upgrade ? 'upgrading' : 'under construction'} at ${hexName(i)}`, 'good');
+  UI.panelDirty = true;
+  return true;
+}
+function stepTerritory(dt) {
+  for (const [k, b] of Object.entries(S.world.bld)) {
+    const i = +k;
+    if (S.world.owner[i] !== -2) { delete S.world.bld[k]; continue; }   // lost the hex → building gone
+    if (b.build > 0) {
+      b.build -= dt;
+      if (b.build <= 0) {
+        b.build = 0; b.level++;
+        const d = TERRITORY_BUILDINGS[b.type];
+        log(`${d.name} ${b.level === 1 ? 'built' : 'upgraded to level ' + b.level} at ${hexName(i)}.`, 'good');
+        if (d.vision) reveal(i, d.vision + b.level - 1);
+        UI.panelDirty = true;
+      }
+    }
+  }
+}
+function tbProduction(i) {
+  const b = tbAt(i);
+  if (!b || b.level < 1) return null;
+  const d = TERRITORY_BUILDINGS[b.type], out = {};
+  if (d.prod) for (const [k, v] of Object.entries(d.prod)) out[k] = v * b.level;
+  const f = S.world.feat[i];
+  if (b.type === 'mine' && f) {   // mines triple the special deposit instead of plain iron
+    delete out.iron;
+    if (f.type === 'goldvein') out.gold = 0.6 * 2 * b.level;
+    if (f.type === 'cave' && f.explored) for (const [k, v] of Object.entries(MINERALS[f.mineral].bonus)) out[k] = v * 2 * b.level;
+  }
+  return out;
+}
+function dockAt(water) {
+  for (const n of WG.neighbors(water)) { const b = S.world.bld[n]; if (b && b.type === 'dock' && b.level > 0 && S.world.owner[n] === -2) return n; }
+  return -1;
+}
+const stationedAt = (i) => S.divisions.filter((d) => d.at === i && !d.path.length && d.status !== 'fighting');
+function hexDefense(i) {
+  const b = tbAt(i), d = b && b.level > 0 ? TERRITORY_BUILDINGS[b.type].def || 0 : 0;
+  return d * (b ? b.level : 0) + stationedAt(i).reduce((s, x) => s + armyPower(x.units, x.general), 0) + (i === S.world.capital ? defenseRating() + armyPower(S.army, S.castellan) : 0);
+}
+const isDefended = (i) => hexDefense(i) > 0;

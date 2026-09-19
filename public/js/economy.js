@@ -217,6 +217,8 @@ function territoryBonus() {
     const f = feat[i];
     if (f && f.type === 'goldvein') r.gold += 0.6;
     if (f && f.type === 'cave' && f.explored) for (const [k, v] of Object.entries(MINERALS[f.mineral].bonus)) r[k] += v;
+    const tp = S.world.bld && tbProduction(i);
+    if (tp) for (const [k, v] of Object.entries(tp)) r[k] += v;
   }
   return r;
 }

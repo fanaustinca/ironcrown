@@ -211,10 +211,24 @@ await test('train troops and muster a division with a general', async () => {
   const s2 = await state();
   const d = s2.divisions.find((x) => x.name === 'Test Legion');
   assert(d && d.units.pikeman >= 5, 'division created with troops from the garrison');
-  await page.selectOption('[data-tab="generals"]', { index: 0 }).catch(() => {});
+  assert(d.general && s2.divisions.every((x, i, a) => a.findIndex((y) => y.general === x.general) === i), 'each division has its own general');
+});
+
+await test('generals: one per division, tavern hire, copies & promotion', async () => {
+  const noGen = await G(() => { const n = window.ironcrown.state.divisions.length; window.ironcrown.api.createDivision('Leaderless', { archer: 1 }, null); return window.ironcrown.state.divisions.length === n; });
+  assert(noGen, 'a division cannot be mustered without a general');
+  await page.click('[data-tab="shop"]');
+  const g0 = (await state()).generals.length;
+  await page.click('.card [data-action="hire"]');
+  assert((await state()).generals.length === g0 + 1, 'hired a general at the tavern');
+  await G(() => { cheats.generals(2); });
   await page.click('[data-tab="generals"]');
-  await page.selectOption('select[data-assign="aldric"]', `division:${d.id}`);
-  assert((await state()).divisions.find((x) => x.id === d.id).general === 'aldric', 'general assigned to division');
+  const promo = await page.$('[data-action="promote"]');
+  assert(promo, 'promote button offered for duplicate copies');
+  const n0 = (await state()).generals.length;
+  await promo.click();
+  const s = await state();
+  assert(s.generals.length === n0 - 1 && s.generals.some((g) => g.stars > 5 - 1 || g.stars >= 2), 'spare copy merged into a promoted general');
   await shot('06-generals');
 });
 
@@ -239,19 +253,51 @@ await test('world map: hex terrain, fog, minimap, select a division and march', 
   assert((await state()).divisions.find((x) => x.id === d.id).at === target, 'division arrived');
 });
 
-await test('scouts reveal fog and gather intel', async () => {
+await test('scouts: dispatch a party, click a point, everything on the way is revealed', async () => {
   const s = await state();
   const k = s.kingdoms[0];
   const seen0 = s.world.seen.filter(Boolean).length;
-  await clickHex('world', k.capital);
-  await page.click('[data-action="scout"]');
-  await ff(90);
+  await page.keyboard.press('Escape');
+  await page.click('[data-tab="army"]');
+  await page.click('[data-action="dispatch-scouts"]');
+  const party = (await state()).scouts[0];
+  assert(party, 'scout party on the map');
+  await clickHex('world', k.capital);                       // left-click moves the selected scouts
+  const moving = (await state()).scouts[0];
+  assert(moving.path.length > 0, 'scouts walking to the clicked point');
+  const route = moving.path.slice();
+  await shot('07b-scouts');
+  await ff(200);
   const s2 = await state();
+  assert(route.every((i) => s2.world.seen[i]), 'every hex on the route was revealed');
   assert(s2.world.seen.filter(Boolean).length > seen0 && s2.intel[k.id], 'fog lifted and intel gathered');
 });
 
-await test('shipyard, build ships, form a fleet and sail', async () => {
+await test('claim land anywhere and build on it', async () => {
+  await G(() => window.ironcrown.debug.give({ gold: 30000, lumber: 30000, iron: 10000, food: 10000 }));
+  const hex = await G(() => { const s = window.ironcrown.state, W = window.ironcrown.debug.WG; return s.world.owner.map((o, i) => i).filter((i) => s.world.owner[i] === -1 && s.world.seen[i] && [1, 2].includes(s.world.terrain[i]) && !s.world.feat[i] && distToTerritory(i) >= 3).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0]; });
+  assert(hex !== undefined, 'a distant neutral plains hex');
+  await page.keyboard.press('Escape');
+  await clickHex('world', hex);
+  await page.click('[data-action="claim"]');
+  assert((await state()).world.owner[hex] === -2, 'claimed a hex far from the borders');
+  await page.click('[data-action="tb-build"][data-tb="farmstead"]');
+  assert((await state()).world.bld[hex]?.type === 'farmstead', 'farmstead under construction');
+  await ff(30);
+  assert((await state()).world.bld[hex].level === 1, 'farmstead built');
+  await shot('07c-territory');
+});
+
+await test('port trains seamen, shipyard builds crewed ships, form a fleet and sail', async () => {
   await page.click('[data-view="kingdom"]');
+  await page.click('[data-tab="info"]');
+  await page.click('.build-item[data-type="port"]');
+  await clickHex('kingdom', await G(() => window.ironcrown.debug.freeHex('port')));
+  await ff(30);
+  await page.click('[data-tab="navy"]');
+  assert(await page.isDisabled('[data-action="build-ship"][data-arg="sloop:1"]'), 'ships need a crew first');
+  for (let k = 0; k < 3; k++) { await page.click('[data-action="train"][data-arg="seaman:5"]'); await ff(20); }
+  assert((await state()).army.seaman >= 14, 'seamen trained at the port');
   await page.click('[data-tab="info"]');
   await page.click('.build-item[data-type="shipyard"]');
   const hex = await G(() => window.ironcrown.debug.freeHex('shipyard'));
@@ -262,7 +308,8 @@ await test('shipyard, build ships, form a fleet and sail', async () => {
   await page.click('[data-action="build-ship"][data-arg="sloop:1"]');
   await page.click('[data-action="build-ship"][data-arg="cog:1"]');
   await ff(40);
-  assert((await state()).harbor.cog === 1, 'ships launched into harbour');
+  const hs = await state();
+  assert(hs.harbor.cog === 1 && hs.army.seaman < 14, 'ships launched into harbour with their crews aboard');
   await page.click('[data-action="form-fleet"]');
   await page.click('#fleet-yes');
   const f = (await state()).fleets[0];
@@ -290,7 +337,7 @@ await test('division explores ruins (battle auto-resolved)', async () => {
   await G(() => cheats.hall(6));
   const ruin = await G(() => { const s = window.ironcrown.state, W = window.ironcrown.debug.WG; return Object.keys(s.world.feat).map(Number).filter((i) => s.world.feat[i].type === 'ruins' && findPath(W, s.world.capital, i, aiLandCost)).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0]; });
   assert(ruin !== undefined, 'a reachable ruin');
-  await G(() => window.ironcrown.api.createDivision('Raiders', { swordsman: 40, archer: 40, horseman: 30 }, null));
+  await G(() => window.ironcrown.api.createDivision('Raiders', { swordsman: 40, archer: 40, horseman: 30 }, idleGenerals()[0].uid));
   const d = (await state()).divisions.find((x) => x.name === 'Raiders');
   const ok = await G(([id, r]) => { const d = window.ironcrown.state.divisions.find((x) => x.id === id); return window.ironcrown.api.giveOrder(d, 'explore', r); }, [d.id, ruin]);
   assert(ok, 'route to ruins');
@@ -299,25 +346,45 @@ await test('division explores ruins (battle auto-resolved)', async () => {
   assert(s2.world.feat[ruin].looted || s2.stats.ruinsExplored > 0 || !s2.divisions.find((x) => x.id === d.id), 'ruins fought over');
 });
 
-await test('assault an enemy capital and watch the battle', async () => {
+await test('battle is fought on the map with formations and stances', async () => {
   await G(() => { window.ironcrown.SETTINGS.battleMode = 'watch'; cheats.army(80); });
   const kid = await G(() => { const s = window.ironcrown.state, W = window.ironcrown.debug.WG; return s.kingdoms.slice().sort((a, b) => W.dist(a.capital, s.world.capital) - W.dist(b.capital, s.world.capital)).find((k) => findPath(W, s.world.capital, k.capital, aiLandCost))?.id; });
   assert(kid !== undefined, 'a reachable kingdom');
-  await G(() => window.ironcrown.api.createDivision('Siege Host', { swordsman: 60, archer: 60, horseman: 50, pikeman: 30 }, null));
+  await G(() => window.ironcrown.api.createDivision('Siege Host', { swordsman: 60, archer: 60, horseman: 50, pikeman: 30 }, idleGenerals()[0].uid));
   const d = (await state()).divisions.find((x) => x.name === 'Siege Host');
+  assert(d, 'division mustered');
   await G(([id, kid]) => { const s = window.ironcrown.state; const d = s.divisions.find((x) => x.id === id); window.ironcrown.api.giveOrder(d, 'attack', s.kingdoms[kid].capital); }, [d.id, kid]);
-  // advance in small live steps so the battle opens in the viewer
-  for (let i = 0; i < 400 && !(await page.isVisible('#battle')); i++) await G(() => { for (let k = 0; k < 5; k++) step(1); });
-  assert(await page.isVisible('#battle'), 'battle viewer opened');
+  for (let i = 0; i < 400 && !(await G(() => window.ironcrown.Battles.list.length)); i++) await G(() => { for (let k = 0; k < 5; k++) step(1); });
+  assert(await G(() => window.ironcrown.Battles.list.length) === 1, 'battle started on the map');
+  assert(await page.isHidden('#modal'), 'no separate battle screen');
+  await page.waitForSelector('#battle-hud:not([hidden])');
+  assert(await page.isVisible('#battle-hud'), 'command bar visible');
+  await page.click('[data-action="b-form"][data-arg$=":wedge"]');
+  await page.click('[data-action="b-stance"][data-arg$=":charge"]');
+  const g = await G(() => { const b = window.ironcrown.Battles.list[0]; return { f: b.groups[0].formation, s: b.groups[0].stance }; });
+  assert(g.f === 'wedge' && g.s === 'charge', 'formation & stance changed mid-battle');
   await page.waitForTimeout(1500);
-  assert((await canvasRichness('#battle-canvas')) > 25, 'battle drawn');
-  await shot('09-battle');
-  await page.click('#battle-skip');
-  await page.waitForSelector('#battle-close');
-  await shot('10-battle-result');
-  await page.click('#battle-close');
+  await shot('09-battle-on-map');
+  await page.click('[data-action="b-resolve"]');
   const s = await state();
   assert(s.stats.battlesWon + s.stats.battlesLost >= 1, 'battle recorded');
+  await page.waitForTimeout(3500);
+  assert(await G(() => window.ironcrown.Battles.list.length) === 0, 'battlefield cleared');
+});
+
+await test('graphics quality: high textures ↔ low-poly switch live', async () => {
+  await page.click('.hud-stats [data-action="settings"]');
+  await page.selectOption('[data-setting="graphics"]', 'low');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  const low = await canvasRichness('#stage');
+  await shot('10-lowpoly');
+  await page.click('.hud-stats [data-action="settings"]');
+  await page.selectOption('[data-setting="graphics"]', 'high');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  const high = await canvasRichness('#stage');
+  assert(low > 20 && high > low, `high quality is more detailed (${low} → ${high} colour buckets)`);
 });
 
 await test('enemy raid marches across the map and is resolved', async () => {
@@ -325,7 +392,7 @@ await test('enemy raid marches across the map and is resolved', async () => {
   const before = await state();
   await G(() => cheats.raid());
   const raid = (await state()).aiArmies.find((a) => a.kind === 'raid');
-  assert(raid && raid.path.length > 0, 'raid army marching');
+  assert(raid && raid.path.length > 0 && raid.targetHex != null, 'raid army marching on a target hex');
   assert(await page.isVisible('.alert'), 'threat alert shown');
   await shot('11-raid-alert');
   await ff(600);

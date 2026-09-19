@@ -5,7 +5,7 @@
    ========================================================================== */
 'use strict';
 
-const GAME_VERSION = '2.0.0';
+const GAME_VERSION = '2.1.0';
 const SAVE_VERSION = 2;
 
 // Kingdom map (hex grid, pointy-top, odd-r offset)
@@ -70,8 +70,8 @@ const BUILDINGS = {
                  desc: 'Builds Catapults (requires the Siege Engineering research).' },
   scoutlodge:  { name: 'Scout Lodge', icon: '🔭', cat: 'military', trains: ['scout'], base: { gold: 100, lumber: 100 }, mult: 1.8, time: 4, limit: [1,1,1,1,1,1],
                  desc: 'Trains Scouts. Level increases how far scouts reveal.' },
-  port:        { name: 'Port', icon: '⚓', cat: 'naval', coastal: true, rate: 0.9, base: { gold: 350, lumber: 350 }, mult: 1.8, time: 8, hall: 2, limit: [0,1,1,2,2,2],
-                 desc: 'Must touch the sea. Trade ships earn gold, and the market lets you exchange goods.' },
+  port:        { name: 'Port', icon: '⚓', cat: 'naval', coastal: true, rate: 0.9, trains: ['seaman'], base: { gold: 350, lumber: 350 }, mult: 1.8, time: 8, hall: 2, limit: [0,1,1,2,2,2],
+                 desc: 'Must touch the sea. Trains Seamen (ship crews), earns trade gold and hosts the market.' },
   shipyard:    { name: 'Shipyard', icon: '🚢', cat: 'naval', coastal: true, builds: true, base: { gold: 400, lumber: 500, iron: 80 }, mult: 1.85, time: 9, hall: 2, limit: [0,1,1,2,2,3],
                  desc: 'Must touch the sea. Builds warships and transports; higher levels unlock bigger ships.' },
   university:  { name: 'University', icon: '🎓', cat: 'civic', research: true, base: { gold: 500, lumber: 400, iron: 100 }, mult: 1.9, time: 10, hall: 2, limit: [0,1,1,2,2,3],
@@ -88,16 +88,18 @@ const UNITS = {
   horseman:  { name: 'Horseman',  icon: '🐎', from: 'stable',     atk: 19, hp: 150, speed: 1.8,  range: 18,  cost: { gold: 70, iron: 30, food: 40 },  time: 6,  housing: 2, vs: { archer: 1.5, catapult: 2 } },
   catapult:  { name: 'Catapult',  icon: '☄️', from: 'workshop',   atk: 42, hp: 130, speed: 0.55, range: 200, cost: { gold: 150, lumber: 120, iron: 60 }, time: 12, housing: 3, vs: { tower: 3 }, splash: true, research: 'siege' },
   scout:     { name: 'Scout',     icon: '🔭', from: 'scoutlodge', atk: 2,  hp: 25,  speed: 2.4,  range: 16,  cost: { gold: 40, food: 10 },             time: 3,  housing: 1 },
+  seaman:    { name: 'Seaman',    icon: '🧑‍✈️', from: 'port',       atk: 5,  hp: 40,  speed: 1.0,  range: 16,  cost: { gold: 25, food: 15 },             time: 2.5, housing: 1 },
 };
 const COMBAT_UNITS = ['archer', 'swordsman', 'pikeman', 'horseman', 'catapult'];
 
 /* ---- Ships ---- lvl = shipyard level required, cap = troop transport capacity */
 const SHIPS = {
-  sloop:   { name: 'Sloop',   icon: '⛵', atk: 10, hp: 90,  speed: 2.2, range: 110, cost: { gold: 120, lumber: 150 },                         time: 8,  lvl: 1, cap: 0,  upkeep: 0.01, desc: 'Fast scout & raider.' },
-  cog:     { name: 'Cog',     icon: '🛶', atk: 4,  hp: 170, speed: 1.2, range: 90,  cost: { gold: 150, lumber: 220 },                         time: 10, lvl: 1, cap: 20, upkeep: 0.01, desc: 'Transport — carries 20 troops across the sea.' },
-  galley:  { name: 'Galley',  icon: '🚣', atk: 22, hp: 230, speed: 1.5, range: 22,  cost: { gold: 260, lumber: 300, iron: 60 },               time: 14, lvl: 2, cap: 0,  upkeep: 0.02, desc: 'Oared warship that rams and boards.' },
-  frigate: { name: 'Frigate', icon: '🚢', atk: 34, hp: 330, speed: 1.6, range: 170, cost: { gold: 500, lumber: 450, iron: 180 },              time: 22, lvl: 3, cap: 0,  upkeep: 0.03, desc: 'Cannon broadsides at long range.' },
-  galleon: { name: 'Galleon', icon: '🏴', atk: 52, hp: 640, speed: 1.0, range: 180, cost: { gold: 1100, lumber: 800, iron: 400, diamonds: 10 }, time: 35, lvl: 5, cap: 10, upkeep: 0.05, desc: 'Floating fortress; also carries 10 troops.' },
+  sloop:   { name: 'Sloop',   icon: '⛵', crew: 6,  atk: 10, hp: 90,  speed: 2.2, range: 110, cost: { gold: 120, lumber: 150 },                         time: 8,  lvl: 1, cap: 0,  upkeep: 0.01, desc: 'Fast scout & raider.' },
+  cog:     { name: 'Cog',     icon: '🛶', crew: 8,  atk: 4,  hp: 170, speed: 1.2, range: 90,  cost: { gold: 150, lumber: 220 },                         time: 10, lvl: 1, cap: 20, upkeep: 0.01, desc: 'Transport — carries 20 troops across the sea.' },
+  galley:  { name: 'Galley',  icon: '⛴️', crew: 12, atk: 22, hp: 230, speed: 1.5, range: 22,  cost: { gold: 260, lumber: 300, iron: 60 },               time: 14, lvl: 2, cap: 0,  upkeep: 0.02, desc: 'Oared warship that rams and boards.' },
+  frigate: { name: 'Frigate', icon: '🚢', crew: 18, atk: 34, hp: 330, speed: 1.6, range: 170, cost: { gold: 500, lumber: 450, iron: 180 },              time: 22, lvl: 3, cap: 0,  upkeep: 0.03, desc: 'Cannon broadsides at long range.' },
+  galleon: { name: 'Galleon', icon: '🏴', crew: 30, atk: 52, hp: 640, speed: 1.0, range: 180, cost: { gold: 1100, lumber: 800, iron: 400, diamonds: 10 }, time: 35, lvl: 5, cap: 10, upkeep: 0.05, desc: 'Floating fortress; also carries 10 troops.' },
+  manowar: { name: "Man o' War", icon: '🛳️', crew: 50, atk: 85, hp: 1050, speed: 0.9, range: 210, cost: { gold: 2600, lumber: 1700, iron: 950, diamonds: 30 }, time: 60, lvl: 6, cap: 15, upkeep: 0.08, desc: 'Ship of the line: two gun decks of cannon. The mightiest vessel afloat.' },
 };
 const SHIP_TYPES = Object.keys(SHIPS);
 
@@ -218,3 +220,31 @@ const PERSONALITIES = {
 const ALLIANCE_COLORS = ['#f2c14e', '#e5534b', '#4ea1f2', '#57c26b', '#b07cf2', '#e84393'];
 const ALLIANCE_EMBLEMS = ['🦅', '🐉', '🦁', '🐺', '⚜️', '🌙'];
 const DIVISION_COLORS = ['#f2c14e', '#e8e8e8', '#ff8a5c', '#7fd4ff', '#b3f07a', '#ff9ad5'];
+
+/* ---- Buildings on captured / claimed world hexes (one per hex, levels 1-3) ----
+   on(terrain, feature, coastal) → can it be built on this hex? */
+const TERRITORY_BUILDINGS = {
+  farmstead:  { name: 'Farmstead',   icon: '🌾', cost: { gold: 150, lumber: 120 }, time: 20, prod: { food: 0.9 },   on: (t) => [T.PLAINS, T.MEADOW, T.SWAMP].includes(t), desc: 'Fields and barns. Food on plains, meadows and swamps.' },
+  lumbercamp: { name: 'Lumber Camp', icon: '🪓', cost: { gold: 150 },              time: 20, prod: { lumber: 0.8 }, on: (t) => t === T.FOREST, desc: 'Woodcutters harvest the forest.' },
+  mine:       { name: 'Mine',        icon: '⛏️', cost: { gold: 220, lumber: 180 }, time: 30, prod: { iron: 0.6 },   on: (t, f) => t === T.HILLS || (f && (f.type === 'cave' || f.type === 'goldvein')), desc: 'Iron from hills — or triples a cave\'s or gold vein\'s output.' },
+  village:    { name: 'Village',     icon: '🏘️', cost: { gold: 200, lumber: 200 }, time: 25, prod: { gold: 0.5, food: 0.2 }, on: (t) => t !== T.WATER && t !== T.MOUNTAIN, desc: 'Settlers pay taxes. Works on any land.' },
+  watchtower: { name: 'Watchtower',  icon: '🗼', cost: { gold: 180, lumber: 150 }, time: 20, def: 60, vision: 3, on: (t) => t !== T.WATER && t !== T.MOUNTAIN, desc: 'Sees far and defends the hex (counts as defended).' },
+  fortress:   { name: 'Fortress',    icon: '🏯', cost: { gold: 600, lumber: 400, iron: 250 }, time: 45, def: 220, on: (t) => t !== T.WATER && t !== T.MOUNTAIN, desc: 'Strong walls & towers that fight any raid on this hex.' },
+  dock:       { name: 'Dock',        icon: '⚓', cost: { gold: 300, lumber: 300 }, time: 30, prod: { gold: 0.4 }, coastal: true, on: (t, f, c) => c, desc: 'Coastal harbour: fleets can disband here and trade earns gold.' },
+};
+const TB_MAX = 3;
+
+/* ---- Battle formations & stances (battles are fought on the world map) ---- */
+const FORMATIONS = {
+  line:     { name: 'Line',     icon: '〰️', desc: 'Balanced. Infantry in front, archers behind, cavalry on the flanks. +10% ranged attack.', ranged: 1.1, melee: 1, takeRanged: 1, takeMelee: 1, speed: 1 },
+  wedge:    { name: 'Wedge',    icon: '🔺', desc: 'Spearhead charge. +25% melee attack but take +15% damage.', ranged: 1, melee: 1.25, takeRanged: 1.15, takeMelee: 1.15, speed: 1.1 },
+  square:   { name: 'Square',   icon: '⏹️', desc: 'Shield wall. −30% melee damage taken (−45% vs cavalry), slow, +10% ranged damage taken.', ranged: 1, melee: 0.9, takeRanged: 1.1, takeMelee: 0.7, speed: 0.6 },
+  skirmish: { name: 'Skirmish', icon: '✳️', desc: 'Loose order. −40% damage from arrows, cannons and catapults, faster, −10% melee attack.', ranged: 1, melee: 0.9, takeRanged: 0.6, takeMelee: 1, speed: 1.15 },
+};
+const STANCES = {
+  advance: { name: 'Advance', icon: '➡️', desc: 'March in formation and engage enemies that come close.' },
+  hold:    { name: 'Hold',    icon: '✋', desc: 'Stand your ground; only fight what comes within reach.' },
+  charge:  { name: 'Charge',  icon: '⚡', desc: 'Break formation — every squad attacks its chosen target.' },
+  retreat: { name: 'Retreat', icon: '↩️', desc: 'Fall back off the field; escaped troops survive.' },
+};
+const TARGETS = { nearest: 'Nearest', weakest: 'Weakest', ranged: 'Archers & siege', cavalry: 'Cavalry', towers: 'Towers' };

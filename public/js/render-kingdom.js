@@ -23,10 +23,11 @@ function drawKingdom(g, t, dt) {
   cam.apply(g);
   if (shakeAmt > 0) { g.translate(rand(-shakeAmt, shakeAmt), rand(-shakeAmt, shakeAmt)); shakeAmt *= 0.85; if (shakeAmt < 0.3) shakeAmt = 0; }
   const vis = cam.visible(2);
-  drawTerrainBase(g, KG, vis, (i) => KT[i] === 1, KDEPTH, kingdomLandColor, S.seed, t);
+  drawTerrainBase(g, KG, vis, (i) => KT[i] === 1, KDEPTH, kingdomLandColor, S.seed, t, (i) => (inLand(i) ? 'grass' : 'grassDark'), (i) => (hash2(i, 8) - 0.5) * 0.12);
 
   // plaza cobbles
   for (const i of KG.neighbors(HALL_HEX).concat(HALL_HEX)) {
+    if (SETTINGS.graphics === 'high') { g.fillStyle = patXform(pattern(g, 'cobble')); g.beginPath(); KG.hexPath(g, i, 1.01); g.fill(); continue; }
     g.fillStyle = '#b8ab92'; g.beginPath(); KG.hexPath(g, i, 1.01); g.fill();
     g.fillStyle = '#a5987f';
     for (let k = 0; k < 7; k++) { const a = hash2(i, k) * 6.28, r = hash2(k, i) * K_HEX * 0.7; g.beginPath(); g.ellipse(KG.cx[i] + Math.cos(a) * r, KG.cy[i] + Math.sin(a) * r, 4, 3, 0, 0, 7); g.fill(); }
@@ -106,10 +107,12 @@ function drawKingdom(g, t, dt) {
   }
   drawVillagers(g, t, dt);
   drawFx(g, dt);
+  drawCloudShadows(g, KG, t);
 
   // screen-space overlays
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
-  const threat = S.aiArmies.find((a) => a.kind === 'raid' && WG.dist(a.at, S.world.capital) <= 4);
+  drawAtmosphere(g);
+  const threat = S.aiArmies.find((a) => a.kind === 'raid' && a.targetHex === S.world.capital && WG.dist(a.at, S.world.capital) <= 4);
   if (threat) {
     const k = S.kingdoms[threat.kid], edgeA = 0.25 + 0.2 * Math.sin(t * 6);
     const grd = g.createRadialGradient(CW / 2, CH / 2, Math.min(CW, CH) * 0.35, CW / 2, CH / 2, Math.max(CW, CH) * 0.7);
