@@ -81,18 +81,63 @@ const DEPTH_COLORS = ['#58b3cf', '#4aa0c4', '#3a88b3', '#2f73a0', '#27628f', '#2
 // drawTerrainBase lives in gfx.js (quality-aware).
 
 /* ---------- primitives ---------- */
-function box(g, x, y, w, d, h, top, front) { g.fillStyle = front; g.fillRect(x, y + d - h, w, h); g.fillStyle = top; g.fillRect(x, y - h, w, d); }
+function box(g, x, y, w, d, h, top, front) {
+  g.fillStyle = front; g.fillRect(x, y + d - h, w, h);
+  g.fillStyle = top; g.fillRect(x, y - h, w, d);
+  if (SETTINGS.graphics !== 'high' || w < 3) return;
+  // textured, lit faces: material overlay, vertical light falloff, edge highlight, ground contact shade
+  const m = materialOf(front);
+  g.save();
+  g.globalAlpha = 0.55; g.fillStyle = matPattern(g, m); g.fillRect(x, y + d - h, w, h);
+  g.globalAlpha = 0.35; g.fillStyle = matPattern(g, m); g.fillRect(x, y - h, w, d);
+  g.globalAlpha = 1;
+  const fg = g.createLinearGradient(0, y + d - h, 0, y + d);
+  fg.addColorStop(0, 'rgba(255,245,220,.10)'); fg.addColorStop(1, 'rgba(0,0,0,.28)');
+  g.fillStyle = fg; g.fillRect(x, y + d - h, w, h);
+  const tg = g.createLinearGradient(x, y - h, x + w, y - h + d);
+  tg.addColorStop(0, 'rgba(255,250,230,.22)'); tg.addColorStop(1, 'rgba(0,0,0,.08)');
+  g.fillStyle = tg; g.fillRect(x, y - h, w, d);
+  g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x, y + d - h, w, Math.max(0.8, h * 0.04));
+  g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(x + w - Math.max(1, w * 0.05), y + d - h, Math.max(1, w * 0.05), h);
+  g.restore();
+}
 function gable(g, x, y, w, d, rh, color) {
   const ry = y + d * 0.45 - rh;
   g.fillStyle = shade(color, 0.18); g.beginPath(); g.moveTo(x - 2, y); g.lineTo(x + w + 2, y); g.lineTo(x + w - 2, ry); g.lineTo(x + 2, ry); g.closePath(); g.fill();
   g.fillStyle = color; g.beginPath(); g.moveTo(x + 2, ry); g.lineTo(x + w - 2, ry); g.lineTo(x + w + 2, y + d); g.lineTo(x - 2, y + d); g.closePath(); g.fill();
   g.strokeStyle = shade(color, -0.35); g.lineWidth = 1; g.beginPath(); g.moveTo(x + 2, ry); g.lineTo(x + w - 2, ry); g.stroke();
+  if (SETTINGS.graphics !== 'high') return;
+  // roof tiles + sun on the back slope, shade on the front slope
+  g.save();
+  g.beginPath(); g.moveTo(x - 2, y); g.lineTo(x + w + 2, y); g.lineTo(x + w - 2, ry); g.lineTo(x + 2, ry); g.closePath();
+  g.moveTo(x + 2, ry); g.lineTo(x + w - 2, ry); g.lineTo(x + w + 2, y + d); g.lineTo(x - 2, y + d); g.closePath();
+  g.clip();
+  g.globalAlpha = 0.6; g.fillStyle = matPattern(g, 'tiles', 0.28); g.fillRect(x - 3, y - rh - 3, w + 6, d + rh + 6);
+  g.globalAlpha = 1;
+  const lg = g.createLinearGradient(0, ry, 0, y + d);
+  lg.addColorStop(0, 'rgba(255,240,210,.15)'); lg.addColorStop(1, 'rgba(0,0,0,.25)');
+  g.fillStyle = lg; g.fillRect(x - 3, ry, w + 6, y + d - ry + 1);
+  g.restore();
 }
 function cone(g, cx, by, r, h, color) {
   g.fillStyle = color; g.beginPath(); g.moveTo(cx - r, by); g.lineTo(cx + r, by); g.lineTo(cx, by - h); g.closePath(); g.fill();
   g.fillStyle = shade(color, 0.2); g.beginPath(); g.moveTo(cx - r, by); g.lineTo(cx, by); g.lineTo(cx, by - h); g.closePath(); g.fill();
+  if (SETTINGS.graphics === 'high' && r > 4 && h > 10 && !treeMode) {
+    g.save(); g.beginPath(); g.moveTo(cx - r, by); g.lineTo(cx + r, by); g.lineTo(cx, by - h); g.closePath(); g.clip();
+    g.globalAlpha = 0.5; g.fillStyle = matPattern(g, 'tiles', 0.22); g.fillRect(cx - r, by - h, r * 2, h); g.restore();
+  }
 }
-function shadow(g, cx, cy, rx, ry) { g.fillStyle = 'rgba(0,0,0,.22)'; g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, 7); g.fill(); }
+let treeMode = false;
+function shadow(g, cx, cy, rx, ry) {
+  if (SETTINGS.graphics === 'high' && rx > 3) {   // soft contact shadow
+    g.save(); g.translate(cx, cy); g.scale(1, ry / rx);
+    const sg = g.createRadialGradient(0, 0, rx * 0.3, 0, 0, rx * 1.15);
+    sg.addColorStop(0, 'rgba(0,0,0,.34)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = sg; g.beginPath(); g.arc(0, 0, rx * 1.15, 0, 7); g.fill(); g.restore();
+    return;
+  }
+  g.fillStyle = 'rgba(0,0,0,.22)'; g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, 7); g.fill();
+}
 function flag(g, x, y, h, color, t) {
   g.fillStyle = '#5b4630'; g.fillRect(x, y - h, 2, h);
   g.fillStyle = color; g.beginPath(); g.moveTo(x + 2, y - h);
@@ -109,9 +154,11 @@ function mound(g, x, y, s, color) {
   g.fillStyle = '#7a5a36'; g.fillRect(x + s * 0.35, y + s * 0.44, s * 0.3, s * 0.05); g.fillRect(x + s * 0.35, y + s * 0.44, s * 0.05, s * 0.18); g.fillRect(x + s * 0.6, y + s * 0.44, s * 0.05, s * 0.18);
 }
 function tree(g, x, y, r, dark) {
+  treeMode = true;
   shadow(g, x, y + r * 0.3, r * 0.9, r * 0.3);
   g.fillStyle = '#5a3d22'; g.fillRect(x - r * 0.1, y - r * 0.2, r * 0.2, r * 0.5);
   cone(g, x, y, r, r * 1.8, dark ? '#2b5427' : '#356b2f'); cone(g, x, y - r * 0.6, r * 0.75, r * 1.5, dark ? '#346430' : '#3f7d36');
+  treeMode = false;
 }
 function rock(g, x, y, r) {
   shadow(g, x, y + r * 0.3, r, r * 0.35);

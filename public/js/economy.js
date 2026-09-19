@@ -38,6 +38,7 @@ function clearObstacle(i) {
   if (!inLand(i)) { toast('You must own this hex first', 'bad'); return false; }
   if (!pay({ gold: 25 })) { toast('Clearing costs 🪙25', 'bad'); return false; }
   S.cleared.push(i);
+  markChunks(i);
   const loot = o === 'tree' ? { lumber: 60 } : Math.random() < 0.15 ? { iron: 40, diamonds: 2 } : { iron: 40 };
   gain(loot);
   floatText(WG.cx[i], WG.cy[i], Object.entries(loot).map(([k, v]) => `+${v}${RES_META[k].icon}`).join(' '), '#fff');
@@ -104,7 +105,8 @@ function placementError(type, i) {
   if (i < 0) return 'Outside the map';
   if (S.world.terrain[i] === T.WATER) return 'You cannot build on water';
   if (S.world.terrain[i] === T.MOUNTAIN) return 'Mountains are too steep to build on';
-  if (S.world.owner[i] !== -2) return 'You must own this hex — claim it on the map first';
+  if (S.world.owner[i] >= 0) return `This land belongs to ${S.kingdoms[S.world.owner[i]].name}`;
+  if (S.world.owner[i] === -1 && !isSeen(i)) return 'Explore this land first';
   if (i === capHex() || isPlaza(i)) return 'The plaza around the Main Hall must stay clear';
   if (buildingAt(i)) return 'Hex occupied';
   const o = obstacleAt(i);
@@ -115,10 +117,6 @@ function placementError(type, i) {
 function buildLockReason(type) {
   const d = BUILDINGS[type], hl = hallLevel();
   if (d.hall && hl < d.hall) return `Requires Main Hall ${d.hall}`;
-  if (countOf(type) >= limitOf(type)) {
-    const next = d.limit.findIndex((v, i) => i >= hl && v > countOf(type));
-    return next >= 0 ? `Limit reached — Main Hall ${next + 1} allows more` : 'Limit reached';
-  }
   if (buildersBusy() >= builderCount()) return 'All builders are busy';
   return null;
 }
@@ -134,8 +132,14 @@ function placeBuilding(type, i) {
   if (lock) { toast(lock, 'bad'); return null; }
   const err = placementError(type, i);
   if (err) { toast(err, 'bad'); return null; }
-  if (!pay(costFor(type, 1))) { toast('Not enough resources', 'bad'); return null; }
+  // building on unclaimed land claims that hex too
+  const cost = { ...costFor(type, 1) };
+  const settle = S.world.owner[i] === -1;
+  if (settle) for (const [k, v] of Object.entries(hexClaimCost(i))) cost[k] = (cost[k] || 0) + v;
+  if (!pay(cost)) { toast('Not enough resources', 'bad'); return null; }
+  if (settle) { S.world.owner[i] = -2; reveal(i, 3); worldVersion++; }
   const b = addBuilding(type, i, 0);
+  markChunks(i);
   b.build = b.buildTotal = buildTime(type, 1);
   spawnDust(i);
   UI.panelDirty = true;
@@ -166,6 +170,7 @@ function demolish(b) {
   for (const [k, v] of Object.entries(costFor(b.type, Math.max(1, b.level)))) refund[k] = Math.floor(v * 0.4);
   gain(refund);
   S.buildings = S.buildings.filter((x) => x !== b);
+  markChunks(b.hex);
   UI.selected = null;
   UI.panelDirty = true;
   toast(`${BUILDINGS[b.type].name} demolished (40% refunded)`);
@@ -246,5 +251,5 @@ function defenseRating() {
   for (const b of S.buildings) if (BUILDINGS[b.type].def && b.level > 0) d += BUILDINGS[b.type].def * Math.pow(b.level, 1.25);
   return d * (1 + 0.1 * R('masonry')) * (1 + 0.12 * R('fortification')) * (1 + allianceBonus().def);
 }
-// Always covers the Main Hall's own land radius, plus room to claim more.
-const territoryLimit = () => { const r = landRadius(); return 3 * r * (r + 1) + 1 + 40 + 20 * hallLevel() + 20 * R('administration'); };
+// No hard territory limit any more — land just gets pricier to claim as you grow.
+const territoryLimit = () => Infinity;

@@ -166,6 +166,12 @@ function distToTerritory(i) {
 function claimCluster(i) {
   return [i].concat(WG.neighbors(i)).filter((j) => S.world.owner[j] === -1 && isPassable(j) && isSeen(j) && !(S.world.feat[j] && ['fort', 'ruins', 'cove'].includes(S.world.feat[j].type) && !(S.world.feat[j].captured || S.world.feat[j].looted || S.world.feat[j].destroyed)));
 }
+// Price of settling a single hex (used when you build on unclaimed land).
+function hexClaimCost(i) {
+  const n = Math.max(0, playerTiles() - 60), far = Math.max(0, distToTerritory(i) - 1);
+  const m = (1 + 0.06 * far) * Math.pow(1.004, n) * (1 - 0.15 * R('administration'));
+  return { gold: Math.round(28 * m), food: Math.round(14 * m) };
+}
 function claimCost(i) {
   const n = Math.max(0, playerTiles() - 60), far = i != null ? Math.max(0, distToTerritory(i) - 1) : 0;
   const hexes = i != null ? Math.max(1, claimCluster(i).length) : 7;
@@ -183,7 +189,6 @@ function claimError(i) {
   if (f && f.type === 'fort' && !f.captured) return 'Capture the fort with a division';
   if (f && f.type === 'ruins' && !f.looted) return 'Explore the ruins with a division first';
   if (f && f.type === 'cove' && !f.destroyed) return 'Destroy the pirate cove first';
-  if (playerTiles() + claimCluster(i).length > territoryLimit()) return `Territory limit (${territoryLimit()} hexes) — upgrade the Main Hall or research Administration`;
   if (!canAfford(claimCost(i))) return 'Not enough resources';
   return null;
 }

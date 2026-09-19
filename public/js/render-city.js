@@ -46,7 +46,7 @@ function drawCityLayer(g, t, dt, vis) {
   plaza(cap);
   for (const k of S.kingdoms) if (isSeen(k.capital)) plaza(k.capital);
   // cleared hexes & loose rocks on your land
-  for (const i of vis) {
+  if (detail) for (const i of vis) {
     if (S.world.owner[i] !== -2) continue;
     if (cleared(i) && [T.FOREST, T.HILLS].includes(S.world.terrain[i])) { g.fillStyle = SETTINGS.graphics === 'high' ? patXform(pattern(g, 'grass')) : '#7fae55'; g.globalAlpha = 0.9; g.beginPath(); WG.hexPath(g, i, 0.98); g.fill(); g.globalAlpha = 1; }
     const o = obstacleAt(i);

@@ -177,9 +177,62 @@ function ownerBitmap() {
   ownerBmp = c;
   return c;
 }
+/* ---- zoomed-in LOD: terrain cached in map tiles ("chunks"), rebuilt only when they change ---- */
+const LODS = [{ maxZ: 3.2, S: 2.5, size: 200, cap: 40 }, { maxZ: Infinity, S: 6, size: 120, cap: 28 }];
+const chunkCache = [new Map(), new Map()], chunkDirty = new Set();
+let chunkKey = '';
+// Invalidate the tiles around a hex (buildings/clearings change which decorations show).
+function markChunks(i) {
+  if (i == null || i < 0) return;
+  for (const L of LODS) { const cx = Math.floor(WG.cx[i] / L.size), cy = Math.floor(WG.cy[i] / L.size); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) chunkDirty.add(`${L.size}:${cx + dx},${cy + dy}`); }
+}
+function renderChunk(L, cx, cy, occupied) {
+  const c = document.createElement('canvas'); c.width = c.height = Math.ceil(L.size * L.S);
+  const g = c.getContext('2d'), x0 = cx * L.size, y0 = cy * L.size, pad = W_HEX * 3;
+  g.scale(L.S, L.S); g.translate(-x0, -y0);
+  g.beginPath(); g.rect(x0, y0, L.size, L.size); g.clip();
+  g.fillStyle = DEPTH_COLORS[6]; g.fillRect(x0, y0, L.size, L.size);
+  const hw = W_HEX * SQ3, c0 = Math.max(0, Math.floor((x0 - pad) / hw) - 1), c1 = Math.min(WG.W - 1, Math.ceil((x0 + L.size + pad) / hw));
+  const r0 = Math.max(0, Math.floor((y0 - pad) / (W_HEX * 1.5)) - 1), r1 = Math.min(WG.H - 1, Math.ceil((y0 + L.size + pad) / (W_HEX * 1.5)));
+  const list = [];
+  for (let r = r0; r <= r1; r++) for (let q = c0; q <= c1; q++) list.push(r * WG.W + q);
+  const terrain = S.world.terrain, isLandW = (i) => terrain[i] !== T.WATER, cap = S.world.capital;
+  GFX.pat.clear(); GFX.ctx = null;
+  drawTerrainBase(g, WG, list, isLandW, WDEPTH, worldLandColor, S.seed + 1, 0, (i) => WORLD_TEX[terrain[i]], worldShade);
+  for (const i of list) {
+    if (!isLandW(i) || occupied.has(i) || WG.dist(i, cap) <= 1 || (cleared(i) && S.world.owner[i] === -2)) continue;
+    drawTerrainDetail(g, i, 0);
+  }
+  GFX.pat.clear(); GFX.ctx = null;
+  return c;
+}
+function drawChunks(g, z, occupied) {
+  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}`;
+  if (key !== chunkKey) { chunkKey = key; chunkCache.forEach((m) => m.clear()); chunkDirty.clear(); }
+  const li = z < LODS[0].maxZ ? 0 : 1, L = LODS[li], cache = chunkCache[li];
+  for (const k of chunkDirty) { if (k.startsWith(L.size + ':')) { cache.delete(k.slice(k.indexOf(':') + 1)); chunkDirty.delete(k); } }
+  const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+  const cx0 = Math.floor(x0 / L.size), cx1 = Math.floor(x1 / L.size), cy0 = Math.floor(y0 / L.size), cy1 = Math.floor(y1 / L.size);
+  let budget = 3;                                     // build at most a few tiles per frame (no hitches)
+  const want = [];
+  for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) want.push([cx, cy, Math.hypot(cx - (cx0 + cx1) / 2, cy - (cy0 + cy1) / 2)]);
+  want.sort((a, b) => a[2] - b[2]);
+  for (const [cx, cy] of want) {
+    const k = cx + ',' + cy;
+    let c = cache.get(k);
+    if (!c && budget > 0) { budget--; c = renderChunk(L, cx, cy, occupied); cache.set(k, c); }
+    if (!c) continue;
+    cache.delete(k); cache.set(k, c);                 // LRU touch
+    g.drawImage(c, cx * L.size, cy * L.size, L.size, L.size);
+  }
+  while (cache.size > L.cap) cache.delete(cache.keys().next().value);
+}
+
 function drawTerritory(g, list, z) {
   const owner = S.world.owner, colOf = (o) => (o === -2 ? '#f2c14e' : S.kingdoms[o].color);
-  for (const i of list) { const o = owner[i]; if (o === -1) continue; g.fillStyle = colOf(o) + '30'; g.beginPath(); WG.hexPath(g, i, 1.02); g.fill(); }
+  const fills = new Map();
+  for (const i of list) { const o = owner[i]; if (o === -1) continue; if (!fills.has(o)) fills.set(o, []); fills.get(o).push(i); }
+  for (const [o, hexes] of fills) { g.fillStyle = colOf(o) + '30'; g.beginPath(); for (const i of hexes) WG.hexPath(g, i, 1.02); g.fill(); }
   g.lineCap = 'round';
   const byOwner = new Map();
   for (const i of list) {
@@ -212,24 +265,27 @@ function drawWorld(g, t, dt) {
   const occupied = new Set(S.buildings.map((b) => b.hex));
   for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) occupied.add(b.hex);
   if (live) {
-    drawTerrainBase(g, WG, vis, isLandW, WDEPTH, worldLandColor, S.seed + 1, t, (i) => WORLD_TEX[terrain[i]], worldShade);
+    g.drawImage(terrainBitmap(), 0, 0, WG.pw, WG.ph);    // instant fallback under tiles still being built
+    drawChunks(g, z, occupied);
+    if (SETTINGS.graphics === 'high') {                   // animated water on top of the cached tiles
+      const water = vis.filter((i) => !isLandW(i) && WDEPTH[i] <= 4);
+      if (water.length) {
+        g.save(); g.beginPath(); for (const i of water) { g.moveTo(WG.cx[i] + W_HEX * 1.2, WG.cy[i]); g.arc(WG.cx[i], WG.cy[i], W_HEX * 1.2, 0, Math.PI * 2); } g.clip();
+        g.globalAlpha = 0.28; g.fillStyle = patXform(pattern(g, 'water'), t * 7, t * 2); g.fillRect(-1e4, -1e4, 3e4, 3e4); g.globalAlpha = 1; g.restore();
+      }
+    }
     g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 0.6;
     g.beginPath();
     for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 2, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 3 + o, y); g.quadraticCurveTo(x + o, y - 1.2, x + 3 + o, y); }
     g.stroke();
     if (SETTINGS.showGrid) { g.strokeStyle = 'rgba(0,0,0,.09)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
     drawTerritory(g, vis, z);
-    const sorted = vis.slice().sort((a, b) => a - b);
-    for (const i of sorted) {
-      if (!isLandW(i) || occupied.has(i) || WG.dist(i, cap) <= 1 || (cleared(i) && S.world.owner[i] === -2)) continue;
-      drawTerrainDetail(g, i, t);
-    }
   } else {
     g.drawImage(terrainBitmap(), 0, 0, WG.pw, WG.ph);
     if (SETTINGS.showGrid && z > 0.8) { g.strokeStyle = 'rgba(0,0,0,.07)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
     g.drawImage(ownerBitmap(), 0, 0, WG.pw, WG.ph);
   }
-  for (const i of vis) { const f = feat[i]; if (f && isSeen(i) && !occupied.has(i)) drawFeature(g, i, f, t); }
+  if (z > 0.6) for (const i of vis) { const f = feat[i]; if (f && isSeen(i) && !occupied.has(i)) drawFeature(g, i, f, t); }
   drawCityLayer(g, t, dt, vis);
   const icon = (x, y, fn) => { g.save(); g.translate(x, y); g.scale(es, es); fn(); g.restore(); };
   // paths of selected entity & visible enemy raids

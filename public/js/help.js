@@ -103,11 +103,12 @@ const HELP = [
     <h4>Territory</h4>
     <p>Your borders are hexagonal and gold. Click any explored neutral hex → <b>Claim</b>. It works <b>anywhere</b>, and the further it is from your borders the more it costs. <b>Beware:</b> raiders target your <b>undefended</b> hexes, meaning no stationed division and no watchtower or fortress. Undefended land can be pillaged, burned or annexed. The territory limit grows with the Main Hall and Administration.</p>` },
   { id: 'territory', icon: '🏘️', title: 'Building on your land', html: `
-    <p>The whole world is one map of small hexes. <b>You can build on any hex you own</b>, not just around the Main Hall. Click an empty hex of your land and pick from <b>Build here</b>, or choose a building in the 🏗️ Build tab and click a hex.</p>
+    <p>The whole world is one map of small hexes. <b>You can build anywhere:</b> on any hex you own, or on any explored unclaimed land, which settles that hex for a small fee. There is <b>no limit</b> on how many of each building you have. The Main Hall only decides which building types are unlocked and how high they can be upgraded. Click an empty hex and pick from <b>Build here</b>, or choose a building in the 🏗️ Build tab and click a hex.</p>
     <ul>
       <li><b>Terrain matters:</b> Lumber Mills produce more in forests, Gold and Iron Mines on hills (and a lot more on a gold vein), Diamond Mines on a gem cave, and Farms on plains or meadows.</li>
       <li>Forests have trees and hills have rocks. Clear them (🪙25, which pays back in lumber or iron) before building, unless the building uses them: lumber mills go straight into forests and mines onto rocky hills.</li>
-      <li>Towers, Cannons, Spires and <b>Fortresses</b> defend every battle within 3 hexes of them, so use them to guard far-off land. Towers also watch the land around them.</li>
+      <li>Towers, Cannons, Spires and <b>Fortresses</b> fight in every battle within 3 hexes, and they <b>open fire on any hostile army that marches past</b> within range.</li>
+      <li><b>Raiders pick soft targets:</b> buildings with no tower, cannon, spire, fortress or wall nearby are about 4× more likely to be attacked. The Build here panel warns you about unprotected spots.</li>
       <li>Ports and Shipyards need a coastal hex. Fleets can dock at any of your ports.</li>
     </ul>` },
   { id: 'combat', icon: '🛡️', title: 'Combat, raids & defense', html: `
@@ -118,7 +119,8 @@ const HELP = [
         <b>Stance:</b> ${Object.values(STANCES).map((st) => `${st.icon} <b>${st.name}</b> (${st.desc.toLowerCase()})`).join('; ')}.
         <br><b>Target priority:</b> nearest, weakest, archers & siege, cavalry, or towers.</li>
       <li>Set each division's default <b>battle plan</b> on its card. The enemy picks formations to counter yours, for example a Square against cavalry or Skirmish against archers.</li>
-      <li><b>Coalition battles:</b> every force within one hex of a fight joins it. Your nearby divisions fight together, an enemy army fights beside its capital's garrison and towers, and allied kingdoms fight on your side. A third kingdom hostile to both sides turns it into a <b>3-way battle</b>, and each side only fights the teams it's hostile to. <b>Auto-resolve</b> finishes a fight instantly, and Settings can auto-resolve every battle.</li>
+      <li><b>Coalition battles:</b> every force within one hex of a fight joins it. Your nearby divisions fight together, an enemy army fights beside its capital's garrison and towers, and allied kingdoms fight on your side. A third kingdom hostile to both sides turns it into a <b>3-way battle</b>, and each side only fights the teams it's hostile to. <b>Auto-resolve</b> finishes a fight instantly, and Settings can auto-resolve every battle. With several divisions, the <b>All divisions</b> row sets everyone's formation and stance at once.</li>
+      <li>After a battle, the forces that fought rest for 30 seconds, and beaten armies fall back home. Fights don't chain endlessly.</li>
       <li><b>Counters:</b> Pikemen crush cavalry, Horsemen ride down archers and catapults, Archers shred pikemen, Swordsmen beat archers up close, and Catapults smash towers.</li>
       <li><b>Raids:</b> hostile kingdoms send armies at your <b>weakest land</b>, usually undefended outlying hexes and sometimes the capital. A red ⚠ alert shows the target and ETA, and the target hex pulses red. Intercept the army, station a division on the target, or build a watchtower or fortress. Undefended targets are pillaged without a fight.</li>
       <li>Towers, Cannons and Arcane Spires fight in defense battles. Walls strengthen them. Masonry and Fortification research help too.</li>

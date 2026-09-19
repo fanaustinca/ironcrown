@@ -176,8 +176,8 @@ const ACTIONS = {
   hire() { hireGeneral(); },
   'hire-muster'() { if (hireGeneral()) showMuster(); },
   promote(uid) { promoteGeneral(uid); },
-  'b-form'(arg) { const [id, gi, f] = arg.split(':'); const b = Battles.get(+id); if (b) Battles.setFormation(b, +gi, f); renderBattleHud(); },
-  'b-stance'(arg) { const [id, gi, st] = arg.split(':'); const b = Battles.get(+id); if (b) Battles.setStance(b, +gi, st); renderBattleHud(); },
+  'b-form'(arg) { const [id, gi, f] = arg.split(':'); const b = Battles.get(+id); if (b) battleGroups(b, gi).forEach((G) => Battles.setFormation(b, G.gi, f)); renderBattleHud(); },
+  'b-stance'(arg) { const [id, gi, st] = arg.split(':'); const b = Battles.get(+id); if (b) battleGroups(b, gi).forEach((G) => Battles.setStance(b, G.gi, st)); renderBattleHud(); },
   'b-resolve'(id) { Battles.resolve(+id); },
   'b-focus'(id) { const b = Battles.get(+id); if (b) { Battles.focus = b.id; Battles.focusCam(b); } },
   'b-tab'(id) { Battles.focus = +id; renderBattleHud(); },
@@ -303,6 +303,8 @@ function bindInput() {
     }
     for (const [attr, field] of [['entform', 'formation'], ['entstance', 'stance'], ['enttarget', 'target']]) if (d[attr]) { const ent = findEnt(d[attr]); if (ent) ent[field] = e.target.value; e.target.blur(); }
     if (d.btarget) { const [id, gi] = d.btarget.split(':'); const b = Battles.get(+id); if (b) Battles.setTarget(b, +gi, e.target.value); e.target.blur(); }
+    if (d.bform) { const [id, gi] = d.bform.split(':'); const b = Battles.get(+id); if (b) Battles.setFormation(b, +gi, e.target.value); e.target.blur(); }
+    if (d.bstance) { const [id, gi] = d.bstance.split(':'); const b = Battles.get(+id); if (b) Battles.setStance(b, +gi, e.target.value); e.target.blur(); }
     if (d.setting === 'graphics') { worldVersion++; UI.lastPanelHtml = ''; }
   });
   document.addEventListener('keydown', (e) => {
@@ -451,4 +453,11 @@ function inputFrame(dt) {
     if (mouse.y < m) dy += sp; if (mouse.y > CH - m) dy -= sp;
   }
   if (dx || dy) cam.pan(dx, dy);
+}
+
+// 'all' = every one of your groups still fighting in battle b
+function battleGroups(b, gi) {
+  if (gi !== 'all') return [b.groups[+gi]].filter(Boolean);
+  const pti = Battles.playerTeam(b);
+  return b.groups.filter((G) => G.team === pti && Battles.active(b, pti).some((q) => q.g === G.gi));
 }

@@ -38,7 +38,7 @@ function updateHud() {
   }
   const cal = calendar();
   el('kingdom-name').textContent = S.name;
-  el('hall-label').textContent = `Main Hall ${hallLevel()} · ${playerTiles()}/${territoryLimit()} hexes`;
+  el('hall-label').textContent = `Main Hall ${hallLevel()} · ${playerTiles()} hexes of land`;
   el('calendar').textContent = `${cal.season.icon} ${cal.season.name} ${cal.day} · Y${cal.year}`;
   el('builders').textContent = `${buildersBusy()}/${builderCount()}`;
   const unis = universities();
@@ -106,17 +106,20 @@ function renderBattleHud() {
     <span class="bh-count">${b.teams.map((T, ti) => `<span style="color:${T.color === '#222' ? '#ccc' : T.color}" title="${esc(T.name)}">${cnt(ti)}${b.towers.some((x) => x.team === ti && !x.dead) ? ' 🗼' + b.towers.filter((x) => x.team === ti && !x.dead).length : ''}</span>`).join(' vs ')}</span>
     <span class="spacer"></span>${btn('🎯', 'b-focus', b.id, { cls: 'sm ghost', title: 'Center camera' })}${b.done ? '' : btn('⏭ Auto-resolve', 'b-resolve', b.id, { cls: 'sm ghost' })}</div>`;
   if (!b.done) {
-    for (const G of b.groups) {
-      if (G.team !== pti || !b.teams[pti].player) continue;
-      const n = Battles.active(b, pti).filter((q) => q.g === G.gi).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
-      if (!n) { h += `<div class="bh-row muted small">${esc(G.name)} — routed</div>`; continue; }
-      h += `<div class="bh-row"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>
-        <div class="seg">${Object.entries(FORMATIONS).map(([k, f]) => `<button class="${G.formation === k ? 'on' : ''}" data-action="b-form" data-arg="${b.id}:${G.gi}:${k}" title="${esc(f.name + ': ' + f.desc)}">${f.icon} ${f.name}</button>`).join('')}</div>
-        <div class="seg">${Object.entries(STANCES).map(([k, st]) => `<button class="${G.stance === k ? 'on' : ''} ${k === 'retreat' ? 'warn' : ''}" data-action="b-stance" data-arg="${b.id}:${G.gi}:${k}" title="${esc(st.desc)}">${st.icon} ${st.name}</button>`).join('')}</div>
-        <select data-btarget="${b.id}:${G.gi}" title="Target priority">${Object.entries(TARGETS).map(([k, v]) => `<option value="${k}" ${G.target === k ? 'selected' : ''}>🎯 ${v}</option>`).join('')}</select></div>`;
+    const mine = b.groups.filter((G) => G.team === pti && b.teams[pti] && b.teams[pti].player && Battles.active(b, pti).some((q) => q.g === G.gi));
+    const segF = (arg, cur) => `<div class="seg">${Object.entries(FORMATIONS).map(([k, f]) => `<button class="${cur === k ? 'on' : ''}" data-action="b-form" data-arg="${arg}:${k}" title="${esc(f.name + ': ' + f.desc)}">${f.icon} ${f.name}</button>`).join('')}</div>`;
+    const segS = (arg, cur) => `<div class="seg">${Object.entries(STANCES).map(([k, st]) => `<button class="${cur === k ? 'on' : ''} ${k === 'retreat' ? 'warn' : ''}" data-action="b-stance" data-arg="${arg}:${k}" title="${esc(st.desc)}">${st.icon} ${st.name}</button>`).join('')}</div>`;
+    const sel = (attr, arg, obj, cur) => `<select ${attr}="${arg}">${Object.entries(obj).map(([k, v]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${v.icon ? v.icon + ' ' + v.name : '🎯 ' + v}</option>`).join('')}</select>`;
+    if (mine.length > 1) h += `<div class="bh-row"><b class="bh-name">⚔️ All divisions</b>${segF(`${b.id}:all`, '')}${segS(`${b.id}:all`, '')}</div>`;
+    const compact = mine.length > 2;
+    for (const G of mine) {
+      const n = Battles.active(b, pti).filter((q) => q.g === G.gi).reduce((a2, u) => a2 + Math.ceil(u.hp / u.unitHp), 0);
+      h += compact
+        ? `<div class="bh-row compact"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>${sel('data-bform', `${b.id}:${G.gi}`, FORMATIONS, G.formation)}${sel('data-bstance', `${b.id}:${G.gi}`, STANCES, G.stance)}${sel('data-btarget', `${b.id}:${G.gi}`, TARGETS, G.target)}</div>`
+        : `<div class="bh-row"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>${segF(`${b.id}:${G.gi}`, G.formation)}${segS(`${b.id}:${G.gi}`, G.stance)}${sel('data-btarget', `${b.id}:${G.gi}`, TARGETS, G.target)}</div>`;
     }
-    const others = b.groups.filter((G) => !b.teams[G.team].player);
-    h += `<div class="bh-row small muted">${b.teams.length > 2 ? `⚔️ ${b.teams.length}-way battle · ` : ''}${others.map((G) => `<span style="color:${b.teams[G.team].color === '#222' ? '#ccc' : b.teams[G.team].color}">${esc(G.name)}</span>: ${FORMATIONS[G.formation].icon} ${FORMATIONS[G.formation].name} · ${STANCES[G.stance].name}`).join(' &nbsp;|&nbsp; ')}</div>`;
+    const others = b.teams.filter((T) => !T.player);
+    h += `<div class="bh-row small muted">${b.teams.length > 2 ? `⚔️ ${b.teams.length}-way battle · ` : ''}${others.map((T) => { const gs = b.groups.filter((G) => b.teams[G.team] === T); return `<span style="color:${T.color === '#222' ? '#ccc' : T.color}">${esc(T.name)}</span> ${gs.length > 1 ? `(${gs.length} armies)` : ''}: ${gs[0] ? FORMATIONS[gs[0].formation].icon + ' ' + FORMATIONS[gs[0].formation].name : 'towers'}`; }).join(' &nbsp;|&nbsp; ')}</div>`;
   }
   if (box.dataset.html !== h && !UI.hudPointer && !(document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT')) { box.innerHTML = h; box.dataset.html = h; }
   box.hidden = false;
@@ -150,7 +153,7 @@ function renderObstacle(i) {
 function renderBuildList() {
   const hall = S.buildings.find((b) => b.type === 'hall');
   let h = `<h2>Build</h2><p class="muted small">Build on <b>any hex you own</b>. Pick a structure, then click a hex of your land, or click an empty hex of your land and choose from <b>Build here</b>. Terrain matters: mills in forests, mines on hills, farms on plains.</p>
-    <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · ${playerTiles()}/${territoryLimit()} hexes · ${builderCount()} builders</div></div>
+    <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · ${playerTiles()} hexes · ${builderCount()} builders</div></div>
     <span class="spacer"></span>${btn('Open', 'select', hall.id, { cls: 'sm ghost' })}</div>
     ${hall.build > 0 ? `<div style="margin-top:8px">${progress(1 - hall.build / hall.buildTotal)}<div class="small muted">Upgrading… ${fmtTime(hall.build)}</div></div>` : ''}</div>`;
   for (const cat of ['resource', 'defense', 'military', 'naval', 'civic']) {
@@ -159,7 +162,7 @@ function renderBuildList() {
     for (const t of types) {
       const d = BUILDINGS[t], lock = buildLockReason(t), hardLock = d.hall && hallLevel() < d.hall;
       h += `<button class="build-item ${lock ? 'locked' : ''}" data-action="place" data-arg="${t}" data-type="${t}" ${lock ? `title="${esc(lock)}"` : ''}>
-        <div class="bi-top"><span class="bi-ico">${d.icon}</span><b>${d.name}</b><span class="count">${countOf(t)}/${limitOf(t)}</span></div>
+        <div class="bi-top"><span class="bi-ico">${d.icon}</span><b>${d.name}</b><span class="count" title="You have ${countOf(t)} — no limit">×${countOf(t)}</span></div>
         ${hardLock ? `<div class="desc">🔒 Main Hall ${d.hall}</div>` : `<div>${costHtml(costFor(t, 1), S.res)}</div>`}
         <div class="desc">${lock && !hardLock ? '⛔ ' + esc(lock) : esc(d.desc)}</div></button>`;
     }
@@ -184,7 +187,7 @@ function renderBuildingInfo(b) {
   if (d.storage) h += `<dt>Storage bonus</dt><dd>+${Math.round(d.storage * b.level * 100)}%</dd>`;
   if (d.trains) h += `<dt>Unit level</dt><dd>${b.level} (+${12 * (b.level - 1)}% stats)</dd>`;
   if (d.builds) h += `<dt>Ship tier</dt><dd>${SHIP_TYPES.filter((t) => SHIPS[t].lvl <= b.level).map((t) => SHIPS[t].icon).join(' ')}</dd>`;
-  if (b.type === 'hall') h += `<dt>Storage cap</dt><dd>${fmt(capOf('gold'))} (💎${capOf('diamonds')})</dd><dt>Territory limit</dt><dd>${territoryLimit()} hexes</dd><dt>Divisions</dt><dd>${divisionLimit()}</dd>`;
+  if (b.type === 'hall') h += `<dt>Storage cap</dt><dd>${fmt(capOf('gold'))} (💎${capOf('diamonds')})</dd><dt>Your land</dt><dd>${playerTiles()} hexes</dd><dt>Divisions</dt><dd>${divisionLimit()}</dd>`;
   h += '</dl>';
   {
     const err = upgradeError(b);
@@ -406,7 +409,7 @@ function renderWorldInfo() {
   if (i < 0 && !e) {
     const tb = territoryBonus();
     h += `<h2>World Map</h2><p class="small muted">Drag to pan, scroll or pinch to zoom, and use the minimap to jump around. Click a hex to inspect it, and click one of your banners or ships to command it.</p>
-      <dl class="kv"><dt>Territory</dt><dd>${playerTiles()} / ${territoryLimit()} hexes</dd><dt>Scouts at home</dt><dd>🔭 ${S.army.scout}</dd><dt>Divisions / fleets</dt><dd>${S.divisions.length} / ${S.fleets.length}</dd>
+      <dl class="kv"><dt>Your land</dt><dd>${playerTiles()} hexes</dd><dt>Scouts at home</dt><dd>🔭 ${S.army.scout}</dd><dt>Divisions / fleets</dt><dd>${S.divisions.length} / ${S.fleets.length}</dd>
       <dt>Land bonus</dt><dd>${RES.filter((k) => tb[k] > 0).map((k) => `${RES_META[k].icon}+${(tb[k] * 60).toFixed(k === 'diamonds' ? 1 : 0)}/m`).join(' ') || 'none'}</dd></dl>`;
     h += scoutSection();
     if (S.divisions.length || S.fleets.length) h += '<h3>Your forces</h3>' + S.divisions.map((d) => `<div class="member clickable" data-action="select-entity" data-arg="division:${d.id}"><span class="swatch" style="background:${d.color}"></span><b>${esc(d.name)}</b><span class="spacer"></span><span class="small muted">${armyHousing(d.units)} troops · ${d.path.length ? 'moving' : hexName(d.at)}</span></div>`).join('')
@@ -436,6 +439,7 @@ function hexCard(i) {
     if (o === -2) h += territoryCard(i);
     if (o === -1 && terrain[i] !== T.WATER && terrain[i] !== T.MOUNTAIN) {
       const err = claimError(i), far = distToTerritory(i);
+      h += buildHereCard(i, true);
       h += `<div class="card"><b>Neutral land</b> <span class="small muted">${far > 1 ? `· ${far} hexes from your borders (+${Math.round(20 * (far - 1))}% cost)` : '· borders your land'}</span><div class="row" style="margin-top:6px">${costHtml(claimCost(i), S.res)}<span class="spacer"></span>${btn('🏳️ Claim', 'claim', i, { disabled: !!err, title: err || '' })}</div>${err ? `<div class="small muted">${esc(err)}</div>` : '<div class="small muted">Outlying land is a raid target unless you station a division or build a watchtower/fortress.</div>'}</div>`;
     }
     if (o >= 0) h += kingdomCard(S.kingdoms[o]);
@@ -528,13 +532,21 @@ function renderLog() {
 }
 
 function territoryCard(i) {
-  const cap = i === S.world.capital || isPlaza(i), def = hexDefense(i), b = buildingAt(i), o = obstacleAt(i);
+  const cap = i === S.world.capital || isPlaza(i), def = hexDefense(i), b = buildingAt(i);
   let h = `<div class="card"><b>🏳️ Your land${cap ? ' — the capital' : ''}</b>
     <div class="small">Defense here: ${def > 0 ? `🛡️ ${fmt(def)}` : '<span class="bad-txt">undefended — raiders love this</span>'}${stationedAt(i).length ? ` · guarded by ${stationedAt(i).map((d) => esc(d.name)).join(', ')}` : ''}</div>`;
   if (b) return h + `<div class="row" style="margin-top:6px">${BUILDINGS[b.type].icon} <b>${BUILDINGS[b.type].name}</b> · level ${b.level}<span class="spacer"></span>${btn('Open', 'select', b.id, { cls: 'sm' })}</div></div>`;
   if (cap) return h + '</div>';
-  if (o) h += `<div class="row small" style="margin-top:6px">${o === 'tree' ? '🌲 Trees' : '🪨 Rocks'} cover this hex.<span class="spacer"></span>${btn('🪓 Clear 🪙25', 'clear-obstacle', i, { cls: 'sm ghost' })}</div>`;
-  h += '<h3>Build here</h3><div class="tb-grid">';
+  return h + '</div>' + buildHereCard(i, false);
+}
+// "Build here" grid for an empty hex — yours, or unclaimed (building there settles it).
+function buildHereCard(i, neutral) {
+  if (!buildableTerrain(i) || buildingAt(i)) return '';
+  const o = obstacleAt(i), protectedHex = defensesNear(i, 3).length > 0;
+  let h = `<div class="card"><h3 style="margin-top:0">Build here${neutral ? ' <span class="muted small">(also settles this hex: +' + costHtml(hexClaimCost(i)) + ')</span>' : ''}</h3>`;
+  if (o) h += `<div class="row small">${o === 'tree' ? '🌲 Trees' : '🪨 Rocks'} cover this hex.<span class="spacer"></span>${neutral ? '' : btn('🪓 Clear 🪙25', 'clear-obstacle', i, { cls: 'sm ghost' })}</div>`;
+  if (!protectedHex) h += '<div class="small muted">⚠️ No tower, cannon, spire, fortress or wall nearby: buildings here are raided far more often.</div>';
+  h += '<div class="tb-grid">';
   let any = false;
   for (const t of BUILD_ORDER) {
     const err = placementError(t, i), lock = buildLockReason(t);

@@ -463,6 +463,50 @@ await test('AI kingdoms field guard armies and navy patrols', async () => {
   assert(!coastal || s.aiFleets.some((f) => f.patrol), 'coastal kingdoms keep navy patrols');
 });
 
+await test('build anywhere: unclaimed land, no count limits', async () => {
+  await G(() => { cheats.res(200000); cheats.build(); });
+  const r = await G(() => {
+    const s = window.ironcrown.state, cap = s.world.capital;
+    const spot = WG.within(cap, 25).find((i) => s.world.owner[i] === -1 && isSeen(i) && buildableTerrain(i) && !obstacleAt(i) && !buildingAt(i));
+    if (spot == null) return { skip: true };
+    const b = placeBuilding('farm', spot); cheats.build();
+    let farms = 0;
+    for (let n = 0; n < 12; n++) { const i = window.ironcrown.debug.freeHex('farm'); if (i >= 0 && placeBuilding('farm', i)) { farms++; cheats.build(); } }
+    return { ok: !!b, owned: s.world.owner[spot] === -2, farms, total: countOf('farm'), oldLimit: BUILDINGS.farm.limit[5] };
+  });
+  if (!r.skip) assert(r.ok && r.owned, 'built on unclaimed land and settled it');
+  assert(r.total > r.oldLimit, `more farms than the old limit (${r.total} > ${r.oldLimit})`);
+});
+
+await test('towers open fire on passing enemies; battles do not chain', async () => {
+  await G(() => { window.ironcrown.SETTINGS.battleMode = 'auto'; });
+  const r = await G(() => {
+    const s = window.ironcrown.state, cap = s.world.capital;
+    const k = s.kingdoms.find((x) => canReachCapital(x));
+    const spot = window.ironcrown.debug.freeHex('tower');
+    placeBuilding('tower', spot); cheats.build();
+    k.atWar = true; k.relation = -90;
+    const passBy = WG.within(spot, 2).find((i) => isPassable(i) && WG.dist(i, spot) === 2);
+    const far = WG.within(spot, 12).find((i) => isPassable(i) && WG.dist(i, spot) === 10);
+    s.divisions.forEach((d) => { d.at = s.world.capital; d.path = []; });
+    const army = { id: 'passer', kid: k.id, kind: 'war', units: { swordsman: 15, archer: 5, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 }, hall: 1, at: passBy, path: [far], prog: 0, target: far, status: 'moving' };
+    s.aiArmies.push(army);
+    let n = 0; const orig = Battles.create.bind(Battles); Battles.create = (c) => { n++; return orig(c); };
+    for (let t = 0; t < 10; t++) step(1, true);
+    const after10 = n;
+    Battles.create = orig;
+    return { fought: after10 >= 1, chained: after10 > 3, towers: playerTowers(passBy).n };
+  });
+  assert(r.towers > 0 && r.fought, `defenses engaged the passing army (towers ${r.towers})`);
+  assert(!r.chained, 'no endless chain of battles');
+});
+
+await test('assets are version-stamped so updates never mix old and new files', async () => {
+  const srcs = await page.$$eval('script[src]', (els) => els.map((e) => e.getAttribute('src')));
+  const v = await G(() => window.ironcrown.version);
+  assert(srcs.length > 10 && srcs.every((x) => x.includes('?v=' + v)), 'every script carries ?v=' + v);
+});
+
 await test('graphics quality: high textures ↔ low-poly switch live', async () => {
   await page.click('.hud-stats [data-action="settings"]');
   await page.selectOption('[data-setting="graphics"]', 'low');

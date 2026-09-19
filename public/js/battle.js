@@ -173,6 +173,10 @@ const Battles = {
       if (nearest > 100) { const d = dist(G.ax, G.ay, cx, cy) || 1; G.ax += ((cx - G.ax) / d) * spd * dt; G.ay += ((cy - G.ay) / d) * spd * dt; }
     }
     const all = b.units;
+    // spatial grid for cheap neighbour (separation) lookups
+    const grid = new Map(), cell = 32, keyOf = (x, y) => ((x / cell) | 0) * 4096 + ((y / cell) | 0);
+    for (const o of all) { if (o.dead || o.escaped) continue; const k = keyOf(o.x + 100, o.y + 100); let c = grid.get(k); if (!c) grid.set(k, (c = [])); c.push(o); }
+    const near = (a) => { const out = [], cx = ((a.x + 100) / cell) | 0, cy = ((a.y + 100) / cell) | 0; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const c = grid.get((cx + dx) * 4096 + cy + dy); if (c) out.push(...c); } return out; };
     for (const a of all) {
       if (a.dead || a.escaped) continue;
       const G = b.groups[a.g], F = FORMATIONS[G.formation];
@@ -213,7 +217,7 @@ const Battles = {
         const sp = a.speed * F.speed * dt * (G.stance === 'retreat' ? 1.15 : 1);
         let vx = ((goalX - a.x) / d) * Math.min(sp, d), vy = ((goalY - a.y) / d) * Math.min(sp, d);
         const sep = a.naval ? 28 : 12;
-        for (const o of all) {
+        for (const o of near(a)) {
           if (o === a || o.dead || o.escaped || Math.abs(o.x - a.x) > sep || Math.abs(o.y - a.y) > sep) continue;
           const od = dist(a.x, a.y, o.x, o.y) || 1;
           if (od < sep) { vx += ((a.x - o.x) / od) * sp * 0.5; vy += ((a.y - o.y) / od) * sp * 0.5; }
@@ -337,14 +341,27 @@ const Battles = {
         else if (f.kind === 'bit') { g.fillStyle = f.color; g.fillRect(f.x, f.y, 3, 3); }
         g.globalAlpha = 1;
       }
+      // labels: one per player division, one per enemy side (placed at its centre)
+      const labels = [];
       for (const G of b.groups) {
-        if (!this.active(b, G.team).some((q) => q.g === G.gi)) continue;
-        const T = b.teams[G.team], x = clamp(G.ax, 60, BW - 60), y = clamp(G.ay - 40, 20, BH - 20);
-        g.font = 'bold 13px sans-serif'; g.textAlign = 'center';
-        const label = `${FORMATIONS[G.formation].icon} ${G.name} · ${STANCES[G.stance].name}`, w = g.measureText(label).width + 12;
-        g.fillStyle = 'rgba(12,14,20,.8)'; g.fillRect(x - w / 2, y - 14, w, 19);
-        g.fillStyle = T.color === '#222' ? '#ccc' : T.color; g.fillText(label, x, y); g.textAlign = 'left';
+        const alive = b.units.filter((q) => q.g === G.gi && !q.dead && !q.escaped);
+        if (!alive.length) continue;
+        const T = b.teams[G.team];
+        if (T.player) labels.push([`${FORMATIONS[G.formation].icon} ${G.name} · ${STANCES[G.stance].name}`, G.ax, G.ay - 40, '#f2c14e']);
       }
+      b.teams.forEach((T, ti) => {
+        if (T.player) return;
+        const alive = b.units.filter((q) => q.team === ti && !q.dead && !q.escaped);
+        if (!alive.length) return;
+        const cx = alive.reduce((a, q) => a + q.x, 0) / alive.length, cy = Math.min(...alive.map((q) => q.y));
+        labels.push([`${T.name} (${alive.reduce((a, q) => a + Math.ceil(q.hp / q.unitHp), 0)})`, cx, cy - 34, T.color === '#222' ? '#ccc' : T.color]);
+      });
+      g.font = 'bold 13px sans-serif'; g.textAlign = 'center';
+      for (const [text, lx, ly, col] of labels) {
+        const x = clamp(lx, 70, BW - 70), y = clamp(ly, 20, BH - 20), w = g.measureText(text).width + 12;
+        g.fillStyle = 'rgba(12,14,20,.8)'; g.fillRect(x - w / 2, y - 14, w, 19); g.fillStyle = col; g.fillText(text, x, y);
+      }
+      g.textAlign = 'left';
       if (b.done) {
         const pt = b.teams.find((T) => T.player);
         const text = pt ? (b.result.win ? 'Victory!' : 'Defeat') : 'Battle over';

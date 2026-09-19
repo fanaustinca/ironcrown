@@ -219,3 +219,49 @@ function drawAtmosphere(g) {
   v.addColorStop(0, 'rgba(255,236,190,.06)'); v.addColorStop(0.6, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,10,.28)');
   g.fillStyle = v; g.fillRect(0, 0, CW, CH);
 }
+
+/* ---- building materials (High quality): stone, planks, roof tiles ---- */
+const MAT = { tex: null, pat: new Map(), ctx: null };
+function buildMaterials() {
+  const mk = (paint) => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'); paint(g, mulberry32(c.width + MAT.pat.size)); return c; };
+  MAT.tex = {
+    stone: mk((g, r) => {
+      g.fillStyle = 'rgba(0,0,0,0)'; g.clearRect(0, 0, 128, 128);
+      for (let y = 0; y < 128; y += 16) for (let x = ((y / 16) % 2) * 12 - 12; x < 128; x += 24) {
+        const v = r();
+        g.fillStyle = `rgba(${v < 0.5 ? '255,255,255' : '0,0,0'},${0.06 + r() * 0.1})`; g.fillRect(x + 1, y + 1, 22, 14);
+        g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1.5; g.strokeRect(x + 0.5, y + 0.5, 24, 16);
+        g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(x + 2, y + 2, 20, 1.5);
+      }
+    }),
+    planks: mk((g, r) => {
+      for (let x = 0; x < 128; x += 16) {
+        g.fillStyle = `rgba(${r() < 0.5 ? '255,255,255' : '0,0,0'},${0.05 + r() * 0.1})`; g.fillRect(x, 0, 16, 128);
+        g.strokeStyle = 'rgba(40,20,5,.45)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, 128); g.stroke();
+        g.strokeStyle = 'rgba(60,30,10,.18)'; g.lineWidth = 1;
+        for (let k = 0; k < 4; k++) { const gx = x + 3 + r() * 10; g.beginPath(); g.moveTo(gx, 0); g.bezierCurveTo(gx + 2, 40, gx - 2, 80, gx + 1, 128); g.stroke(); }
+        if (r() < 0.4) { g.fillStyle = 'rgba(40,20,5,.35)'; g.beginPath(); g.ellipse(x + 8, r() * 128, 2, 3, 0, 0, 7); g.fill(); }
+      }
+    }),
+    tiles: mk((g, r) => {
+      for (let y = 0; y < 128; y += 10) for (let x = ((y / 10) % 2) * 8 - 8; x < 128; x += 16) {
+        g.fillStyle = `rgba(${r() < 0.5 ? '255,255,255' : '0,0,0'},${0.05 + r() * 0.12})`;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + 16, y); g.lineTo(x + 16, y + 7); g.quadraticCurveTo(x + 8, y + 12, x, y + 7); g.closePath(); g.fill();
+        g.strokeStyle = 'rgba(0,0,0,.3)'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, y + 7); g.quadraticCurveTo(x + 8, y + 12, x + 16, y + 7); g.stroke();
+      }
+    }),
+  };
+}
+function matPattern(g, name, scale = 0.32) {
+  if (!MAT.tex) buildMaterials();
+  if (MAT.ctx !== g) { MAT.pat.clear(); MAT.ctx = g; }
+  let p = MAT.pat.get(name);
+  if (!p) { p = g.createPattern(MAT.tex[name], 'repeat'); MAT.pat.set(name, p); }
+  if (p.setTransform) p.setTransform(new DOMMatrix().scale(scale));
+  return p;
+}
+// Grey-ish colours read as masonry, warm ones as timber.
+function materialOf(hex) {
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, gg = (n >> 8) & 255, b = n & 255;
+  return Math.max(r, gg, b) - Math.min(r, gg, b) < 28 ? 'stone' : 'planks';
+}
