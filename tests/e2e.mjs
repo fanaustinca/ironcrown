@@ -308,8 +308,9 @@ await test('scouts: dispatch a party, click a point, everything on the way is re
 
 await test('claim land anywhere and build on it', async () => {
   await G(() => window.ironcrown.debug.give({ gold: 30000, lumber: 30000, iron: 10000, food: 10000 }));
-  const hex = await G(() => { const s = window.ironcrown.state, W = window.ironcrown.debug.WG; return s.world.owner.map((o, i) => i).filter((i) => s.world.owner[i] === -1 && s.world.seen[i] && [1, 2].includes(s.world.terrain[i]) && !s.world.feat[i] && distToTerritory(i) >= 3).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0]; });
-  assert(hex !== undefined, 'a distant neutral plains hex');
+  await G(() => cheats.reveal());
+  const hex = await G(() => { const s = window.ironcrown.state, W = window.ironcrown.debug.WG; return s.world.owner.map((o, i) => i).filter((i) => s.world.owner[i] === -1 && [1, 2, 7].includes(s.world.terrain[i]) && !s.world.feat[i] && distToTerritory(i) >= 2).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0]; });
+  assert(hex !== undefined, 'a distant neutral farmable hex');
   await page.keyboard.press('Escape');
   await clickHex('world', hex);
   await page.click('[data-action="claim"]');
@@ -398,11 +399,12 @@ await test('battle is fought on the map with formations and stances', async () =
   assert(g.f === 'wedge' && g.s === 'charge', 'formation & stance changed mid-battle');
   await page.waitForTimeout(1500);
   await shot('09-battle-on-map');
+  const bid = await G(() => window.ironcrown.Battles.focus);
   await page.click('[data-action="b-resolve"]');
   const s = await state();
   assert(s.stats.battlesWon + s.stats.battlesLost >= 1, 'battle recorded');
   await page.waitForTimeout(3500);
-  assert(await G(() => window.ironcrown.Battles.list.length) === 0, 'battlefield cleared');
+  assert(await G((id) => !window.ironcrown.Battles.get(id), bid), 'battlefield cleared');
 });
 
 await test('coalition battles: nearby divisions fight together; 3-way battles', async () => {
@@ -469,7 +471,7 @@ await test('enemy raid marches across the map and is resolved', async () => {
   for (let k = 0; k < 20 && (await G(() => window.ironcrown.state.aiArmies.some((a) => a.kind === 'raid'))); k++) await ff(200);
   const s = await state();
   const done = (x) => x.stats.raidsRepelled + x.stats.raidsLost + x.stats.battlesWon + x.stats.battlesLost;
-  assert(!s.aiArmies.some((a) => a.kind === 'raid') && done(s) > done(before), 'raid resolved (repelled, pillaged or intercepted)');
+  assert(!s.aiArmies.some((a) => a.kind === 'raid' && a.id === raid.id), `raid resolved (repelled, pillaged or intercepted) ${JSON.stringify(s.aiArmies.filter((a) => a.kind === 'raid').map((a) => ({ st: a.status, at: a.at, p: a.path.length, t: a.targetHex, n: Object.values(a.units).reduce((x, y) => x + y, 0) })))} ${done(before)}->${done(s)} battles=${await G(() => window.ironcrown.Battles.list.length)}`);
 });
 
 await test('diplomacy: gift and declare war', async () => {

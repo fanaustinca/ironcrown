@@ -427,7 +427,7 @@ function handleClick(p, button) {
     const o = ordersFor(sel, i), best = o.find(([kk]) => kk !== 'move') || o[0];
     UI.worldSel = i;
     if (best) issueOrder(sel, best[0], i); else toast('No valid order for that hex', 'bad');
-  } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; setTab('map'); }
+  } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; UI.worldSel = hit[0].at; setTab('map'); }
   else if (button === 0) { UI.worldSel = i; UI.selected = null; setTab('map'); }
   renderPanel(true);
 }

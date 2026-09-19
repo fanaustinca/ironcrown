@@ -411,7 +411,8 @@ function renderWorldInfo() {
     h += scoutSection();
     if (S.divisions.length || S.fleets.length) h += '<h3>Your forces</h3>' + S.divisions.map((d) => `<div class="member clickable" data-action="select-entity" data-arg="division:${d.id}"><span class="swatch" style="background:${d.color}"></span><b>${esc(d.name)}</b><span class="spacer"></span><span class="small muted">${armyHousing(d.units)} troops · ${d.path.length ? 'moving' : hexName(d.at)}</span></div>`).join('')
       + S.fleets.map((f) => `<div class="member clickable" data-action="select-entity" data-arg="fleet:${f.id}"><span>⚓</span><b>${esc(f.name)}</b><span class="spacer"></span><span class="small muted">${shipCount(f.ships)} ships · ${f.path.length ? 'sailing' : hexName(f.at)}</span></div>`).join('');
-  } else if (i >= 0) h += hexCard(i);
+  }
+  if (i >= 0) h += hexCard(i);
   h += '<h3>Known kingdoms</h3>';
   const known = S.kingdoms.filter((k) => isSeen(k.capital));
   h += known.map((k) => { const a = allianceOf(k.allianceId); return `<div class="member clickable" data-action="focus-kingdom" data-arg="${k.id}"><span class="dot" style="background:${k.color}"></span><div><b>${k.name}</b><div class="small muted">Keep ${k.hall} · ${kingdomTiles(k.id)} hexes${a ? ' · ' + a.emblem + ' ' + esc(a.name) : ''}</div></div><span class="spacer"></span><span class="small">${relationBar(k)}</span></div>`; }).join('') || '<p class="small muted">None yet — scout into the fog.</p>';

@@ -177,7 +177,7 @@ function landForcesNear(hex, r = 1) {
   const cap = S.world.capital;
   if (WG.dist(cap, hex) <= r) {
     if (COMBAT_UNITS.some((u) => S.army[u] > 0)) out.push({ team: 'P', kind: 'garrison', group: plainGroup('garrison', 'Garrison', S.army, S.castellan, 'line', 'hold') });
-    if (hex === cap) { const tw = playerTowers(); out.push({ team: 'P', kind: 'towers', towers: tw.n, towerHall: tw.hall, towerHp: tw.hpMult }); }
+    if (hex === cap) { const tw = playerTowers(); if (tw.n) out.push({ team: 'P', kind: 'towers', towers: tw.n, towerHall: tw.hall, towerHp: tw.hpMult }); }
     const help = S.allianceId ? S.kingdoms.filter((x) => x.allianceId === S.allianceId).reduce((s2, x) => s2 + x.power * 0.12, 0) : 0;
     if (help > 0 && hex === cap) out.push({ team: 'P', kind: 'allies', group: plainGroup('allies', 'Allied reinforcements', armyFromPower(help, 2, 'balanced'), null) });
   } else if (S.world.owner[hex] === -2) {
@@ -230,6 +230,10 @@ function gatherBattle(hex, core, opts) {
     onEnd: (r) => {
       consumeBoosts();
       const lost = settleForces(forces, r);
+      if (r.teams.P) {   // every battle you take part in counts, however it started
+        const key = opts.kind === 'naval' ? 'naval' : 'battles';
+        S.stats[key + (r.win ? 'Won' : 'Lost')]++;
+      }
       if (opts.onEnd) opts.onEnd(r, lost, teams);
     } };
   return Battles.start(cfg, playerIn && !opts.offline && SETTINGS.battleMode === 'watch' && S.started && Battles.list.filter((b) => !b.done).length < 3);
@@ -321,8 +325,8 @@ function fieldBattle(hex, A, B, title, offline) {
     onEnd: (r, lost) => {
       const p = r.teams.P;
       if (!p) return;
-      if (r.win) { S.stats.battlesWon++; gain({ gold: 120 }); report(`${title}: victory!`, 'good', lost); }
-      else { S.stats.battlesLost++; report(`${title}: defeat.`, 'bad', lost); }
+      if (r.win) { gain({ gold: 120 }); report(`${title}: victory!`, 'good', lost); }
+      else { report(`${title}: defeat.`, 'bad', lost); }
     } });
 }
 function assaultCapital(d, k) {
@@ -337,10 +341,9 @@ function assaultCapital(d, k) {
         for (const res of RES) { const v = Math.floor(k.res[res] * 0.3 + (res === 'diamonds' ? 3 : 150) * k.hall); loot[res] = v; k.res[res] = Math.max(0, k.res[res] - v); }
         gain(loot); k.defeats++;
         let tiles = 0;
-        for (let n = 0; n < 2; n++) if (playerTiles() < territoryLimit() && transferBorderTile(k.id, -2) >= 0) tiles++;
-        S.stats.battlesWon++; gatherIntel(k);
+        for (let n = 0; n < 2; n++) if (playerTiles() < territoryLimit() && transferBorderTile(k.id, -2) >= 0) tiles++; gatherIntel(k);
         report(`⚔️ Victory over ${k.name}! Loot ${costText(loot)}${tiles ? `, ${tiles} hex${tiles > 1 ? 'es' : ''} seized` : ''}.`, 'good', lost);
-      } else { S.stats.battlesLost++; report(`⚔️ The assault on ${k.name} failed.`, 'bad', lost); }
+      } else { report(`⚔️ The assault on ${k.name} failed.`, 'bad', lost); }
       if (S.divisions.includes(d) && d.at === k.capital) giveOrder(d, 'move', neighborsFree(d.at, k.capital));
     } });
 }
@@ -353,9 +356,9 @@ function skirmish(d, k, hex) {
       k.relation -= 10; k.power = Math.max(60, k.power - g * 0.5);
       if (r.win) {
         const room = playerTiles() < territoryLimit();
-        S.world.owner[hex] = room ? -2 : -1; worldVersion++; S.stats.battlesWon++;
+        S.world.owner[hex] = room ? -2 : -1; worldVersion++;
         report(`🏳️ ${room ? 'Conquered' : 'Razed'} a ${TERRAIN[S.world.terrain[hex]].name} hex of ${k.name}.`, 'good', lost);
-      } else { S.stats.battlesLost++; report(`🏳️ Repelled by ${k.name}.`, 'bad', lost); }
+      } else { report(`🏳️ Repelled by ${k.name}.`, 'bad', lost); }
     } });
 }
 
@@ -368,8 +371,8 @@ function arriveFleet(fl, o, f) {
     const cove = { team: 'X', kind: 'cove', group: { key: 'cove', name: 'Pirate cove', units: fleetFromPower(f.power, 3), stats: (t) => enemyShipStats(t, 3) }, towers: 2, towerHall: 3 };
     gatherBattle(fl.at, ['P', 'X'], { kind: 'naval', title: `🏴‍☠️ ${fl.name} attacks the pirate cove`, extra: [cove], holder: 'X',
       onEnd: (r, lost) => {
-        if (r.win) { f.destroyed = true; S.stats.navalWon++; const loot = lootTier(3, 1.6); gain(loot, true); report(`🏴‍☠️ The pirate cove burns! Treasure: ${costText(loot)}. ${bonusDrop(3)}`, 'good', lost); }
-        else { S.stats.navalLost++; report('🏴‍☠️ The pirates drove your fleet off.', 'bad', lost); }
+        if (r.win) { f.destroyed = true; const loot = lootTier(3, 1.6); gain(loot, true); report(`🏴‍☠️ The pirate cove burns! Treasure: ${costText(loot)}. ${bonusDrop(3)}`, 'good', lost); }
+        else { report('🏴‍☠️ The pirates drove your fleet off.', 'bad', lost); }
       } });
   } else if (o.type === 'blockade') {
     const k = S.kingdoms[o.kid], T = teamOfKingdom(k);
@@ -381,9 +384,9 @@ function arriveFleet(fl, o, f) {
         k.navy = Math.max(0, enemyFleetPower(left ? left.survivors : {}, k.hall)); k.relation -= 20;
         if (r.win) {
           const loot = { gold: Math.floor(k.res.gold * 0.25 + 200 * k.hall), food: Math.floor(k.res.food * 0.2) };
-          k.res.gold -= loot.gold; k.res.food -= loot.food; gain(loot); S.stats.navalWon++;
+          k.res.gold -= loot.gold; k.res.food -= loot.food; gain(loot);
           report(`⚓ Blockade of ${k.name} succeeded: ${costText(loot)} plundered.`, 'good', lost);
-        } else { S.stats.navalLost++; report(`⚓ ${k.name}'s navy broke the blockade.`, 'bad', lost); }
+        } else { report(`⚓ ${k.name}'s navy broke the blockade.`, 'bad', lost); }
       } });
   } else if (o.type === 'hunt') {
     const e = S.aiFleets.find((x) => x.id === o.target);
@@ -396,8 +399,8 @@ function navalEngage(fl, e) {
   if (!pirate) provoke(S.kingdoms[e.owner]);
   gatherBattle(e.at, ['P', T], { kind: 'naval', title: `⚓ Sea battle with the ${pirate ? 'pirates' : S.kingdoms[e.owner].name + ' navy'}`,
     onEnd: (r, lost) => {
-      if (r.win) { S.stats.navalWon++; const loot = { gold: Math.round(enemyFleetPower(e.ships, e.hall) * 1.5 + 100) }; gain(loot); report(`⚓ Victory at sea! +${costText(loot)}.`, 'good', lost); }
-      else if (r.teams.P) { S.stats.navalLost++; report('⚓ Your fleet lost the sea battle.', 'bad', lost); }
+      if (r.win) { const loot = { gold: Math.round(enemyFleetPower(e.ships, e.hall) * 1.5 + 100) }; gain(loot); report(`⚓ Victory at sea! +${costText(loot)}.`, 'good', lost); }
+      else if (r.teams.P) { report('⚓ Your fleet lost the sea battle.', 'bad', lost); }
     } });
 }
 
@@ -554,8 +557,8 @@ function piratesAtHarbor(p) {
   if (shipCount(S.harbor) > 0 && S.started) {
     gatherBattle(S.world.harbor, ['P', 'X'], { kind: 'naval', title: '🏴‍☠️ Pirates attack your harbour!', holder: 'P',
       onEnd: (r, lost) => {
-        if (r.win) { gain({ gold: 300 }); S.stats.navalWon++; report('🏴‍☠️ Your harbour guard sank the pirates! +🪙300 bounty.', 'good', lost); }
-        else { S.pirateBlockade = 180; S.stats.navalLost++; report('🏴‍☠️ Pirates overwhelmed the harbour and blockade your port for 3 minutes.', 'bad', lost); }
+        if (r.win) { gain({ gold: 300 }); report('🏴‍☠️ Your harbour guard sank the pirates! +🪙300 bounty.', 'good', lost); }
+        else { S.pirateBlockade = 180; report('🏴‍☠️ Pirates overwhelmed the harbour and blockade your port for 3 minutes.', 'bad', lost); }
       } });
   } else {
     const stolen = Math.floor(S.res.gold * 0.08);
@@ -642,7 +645,7 @@ function resolveRaid(a, offline) {
     S.aiArmies = S.aiArmies.filter((x) => x !== a); raidersHome(a, k, a.units);
     return;
   }
-  gatherBattle(hex, [T, 'P'], { kind: 'land', title: capital ? `🛡️ ${k.name} attacks your capital!` : `🛡️ ${k.name} raids ${hexName(hex)}`, holder: 'P', offline,
+  const fought = gatherBattle(hex, [T, 'P'], { kind: 'land', title: capital ? `🛡️ ${k.name} attacks your capital!` : `🛡️ ${k.name} raids ${hexName(hex)}`, holder: 'P', offline,
     onEnd: (r, lost) => {
       k.relation -= 5;
       const me = S.aiArmies.find((x) => x === a);
@@ -653,6 +656,7 @@ function resolveRaid(a, offline) {
       } else pillage(`broke through at ${capital ? 'your capital' : hexName(hex)}`);
       if (me) { S.aiArmies = S.aiArmies.filter((x) => x !== me); raidersHome(me, k, me.units); }
     } });
+  if (!fought) { pillage(`pillaged ${capital ? 'your capital' : hexName(hex)}`); S.aiArmies = S.aiArmies.filter((x) => x !== a); raidersHome(a, k, a.units); }
 }
 
 /* ---------- diplomacy ---------- */
@@ -714,8 +718,8 @@ function checkEncounters(offline) {
     gatherBattle(B.e.at, [A.team, B.team], { kind: 'naval', offline, title: pl ? `⚓ ${pl.e.name} engages the ${teamInfo(pl === A ? B.team : A.team).name}` : `⚓ ${teamInfo(A.team).name} and ${teamInfo(B.team).name} clash at sea`,
       onEnd: (r, lost) => {
         if (!r.teams.P) return;
-        if (r.win) { S.stats.navalWon++; gain({ gold: 200 }); report('⚓ Victory at sea! +🪙200.', 'good', lost); }
-        else { S.stats.navalLost++; report('⚓ Your fleet lost the sea battle.', 'bad', lost); }
+        if (r.win) { gain({ gold: 200 }); report('⚓ Victory at sea! +🪙200.', 'good', lost); }
+        else { report('⚓ Your fleet lost the sea battle.', 'bad', lost); }
       } });
   }
 }

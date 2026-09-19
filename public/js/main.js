@@ -71,7 +71,7 @@ window.ironcrown = {
       return { x: r.left + x, y: r.top + y };
     },
     focus(view, i) {
-      if (view === 'world') { CAM.centerOn(i); if (CAM.z > 3) CAM.z = 2.2; CAM.clamp(); }
+      if (view === 'world') { CAM.z = 1.3; CAM.centerOn(i); CAM.clamp(); }
       else { const [wx, wy] = k2w(KG.cx[i], KG.cy[i]); CAM.z = Math.max(CAM.z, 5.5); CAM.x = wx; CAM.y = wy; CAM.clamp(); }
     },
     freeHex(type) {
