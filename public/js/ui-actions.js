@@ -1,0 +1,414 @@
+/* ==========================================================================
+   UI part 2: modals, actions (event delegation) and map input.
+   ========================================================================== */
+'use strict';
+
+UI.selHex = -1;
+
+/* ---------- modals ---------- */
+function showModal(html, wide) {
+  UI.boxToken++;
+  el('modal-card').innerHTML = html;
+  el('modal-card').classList.toggle('wide', !!wide);
+  el('modal').hidden = false;
+}
+function closeModal() { el('modal').hidden = true; el('modal-card').innerHTML = ''; }
+
+function showWelcome() {
+  const old = UI.oldSave ? `<p class="card small">⚠️ Your previous save was from Ironcrown v1 and is not compatible with the new hex world. A fresh realm awaits!</p>` : '';
+  showModal(`<h2 style="font-size:26px">👑 Ironcrown <span class="ver">v${GAME_VERSION}</span></h2>${old}
+    <p>Rule a young kingdom in a living world of rival realms, pirates and forgotten ruins.</p>
+    <ul class="small muted" style="padding-left:18px">
+      <li>Build on your <b>hexagonal land</b> and upgrade the Main Hall to grow it.</li>
+      <li>Research at <b>Universities</b>, train troops, build <b>ships</b>.</li>
+      <li>Group soldiers into <b>divisions</b> and ships into <b>fleets</b>, then command them on the <b>World map</b>.</li>
+      <li>Explore ruins, caves, forts and shipwrecks. Trade, ally, or conquer.</li>
+      <li>Press <b>?</b> any time for the full help guide. Drag to move the map, scroll to zoom.</li></ul>
+    <label class="small muted">Name your kingdom</label><input type="text" id="welcome-name" value="${esc(S.name)}" maxlength="24" />
+    <div class="actions">${btn('📖 Help guide', 'help', '', { cls: 'ghost' })}<button class="btn" data-action="begin" id="begin-btn">Begin your reign</button></div>`);
+}
+function showMenu() {
+  showModal(`<h2>Kingdom menu</h2><dl class="kv"><dt>Version</dt><dd>v${GAME_VERSION}</dd><dt>Save slot</dt><dd>${esc(SLOT)}</dd><dt>Backend</dt><dd>${API.online ? '🟢 Python server (cloud save)' : '⚪ Browser storage'}</dd><dt>Played</dt><dd>${fmtTime(S.time)}</dd></dl>
+    <h3>Rename kingdom</h3><div class="row"><input type="text" id="rename-input" value="${esc(S.name)}" maxlength="24" />${btn('Rename', 'rename', '', { cls: 'sm' })}</div>
+    <h3>Save data</h3><div class="row wrap">${btn('💾 Save now', 'save', '', { cls: 'sm' })}${btn('Export', 'export', '', { cls: 'sm ghost' })}${btn('Import', 'import', '', { cls: 'sm ghost' })}${btn('Reset game', 'reset', '', { cls: 'sm red' })}</div>
+    <div class="actions">${btn('⚙️ Settings', 'settings', '', { cls: 'ghost' })}${btn('📖 Help', 'help', '', { cls: 'ghost' })}${btn('Close', 'close-modal', '', { cls: 'ghost' })}</div>`);
+}
+function showSettings() {
+  const sel = (key, opts) => `<select data-setting="${key}">${opts.map(([v, l]) => `<option value="${v}" ${String(SETTINGS[key]) === String(v) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const chk = (key, label) => `<label class="check"><input type="checkbox" data-setting="${key}" ${SETTINGS[key] ? 'checked' : ''}/> ${label}</label>`;
+  showModal(`<h2>⚙️ Settings</h2>
+    <h3>Camera</h3>
+    <div class="setting"><span>Move the map with</span>${sel('panMode', [['drag', '🖱️ Drag (click & drag)'], ['keys', '⌨️ Keyboard (WASD / arrows)'], ['both', 'Both']])}</div>
+    ${chk('invertDrag', 'Invert drag direction')}
+    ${chk('edgeScroll', 'Edge scrolling (move the mouse to the screen edge)')}
+    <div class="setting"><span>Zoom speed</span>${sel('zoomSpeed', [[0.5, 'Slow'], [1, 'Normal'], [1.8, 'Fast']])}</div>
+    ${chk('minimap', 'Show minimap on the World map')}
+    <h3>Display</h3>
+    ${chk('showGrid', 'Show hex grid lines')}
+    ${chk('prodNumbers', 'Floating production numbers')}
+    ${chk('particles', 'Particles & effects')}
+    <h3>Gameplay</h3>
+    <div class="setting"><span>Battles</span>${sel('battleMode', [['watch', '👁️ Watch battles'], ['auto', '⚡ Auto-resolve instantly']])}</div>
+    <p class="small muted">Settings are stored in this browser. Version v${GAME_VERSION}.</p>
+    <div class="actions">${btn('Done', 'close-modal')}</div>`);
+}
+function showHelp(section) {
+  const cur = HELP.find((s) => s.id === section) || HELP[0];
+  showModal(`<div class="help"><nav>${HELP.map((s) => `<button class="${s === cur ? 'active' : ''}" data-action="help" data-arg="${s.id}">${s.icon} ${s.title}</button>`).join('')}</nav>
+    <article><h2>${cur.icon} ${cur.title}</h2>${cur.html}<p class="small muted" style="margin-top:18px">Ironcrown v${GAME_VERSION} · press <kbd>?</kbd> or <kbd>H</kbd> to open this guide.</p></article></div>
+    <div class="actions">${btn('Close', 'close-modal', '', { cls: 'ghost' })}</div>`, true);
+}
+function sliderRows(pool, table, prefix, defaults = 'all') {
+  return Object.keys(table).filter((k) => pool[k] > 0).map((k) => {
+    const v = defaults === 'all' && k !== 'scout' ? pool[k] : 0;   // scouts stay home unless chosen
+    return `<div class="row slider-row"><span style="width:26px">${table[k].icon}</span><span style="width:84px">${table[k].name}</span>
+    <input type="range" min="0" max="${pool[k]}" value="${v}" data-${prefix}="${k}" /><b id="${prefix}-${k}" style="width:60px;text-align:right">${v}/${pool[k]}</b></div>`;
+  }).join('') || '<p class="muted small">Nothing available.</p>';
+}
+function generalSelect(id) {
+  const idle = S.generals.filter((g) => generalPost(g.id).kind === 'none');
+  return `<select id="${id}"><option value="">— no general —</option>${idle.map((g) => `<option value="${g.id}">${generalData(g.id).icon} ${esc(generalData(g.id).name)} (${RARITY[generalData(g.id).rarity].name})</option>`).join('')}</select>`;
+}
+function showMuster() {
+  showModal(`<h2>⚔️ Muster a division</h2><p class="small muted">Troops leave the capital garrison and form a named division you can command on the World map.</p>
+    <input type="text" id="div-name" placeholder="Division name" value="${esc(['2nd', '3rd', '4th', '5th', '6th'][S.divisions.length % 5] + ' ' + pick(['Legion', 'Guard', 'Lancers', 'Company', 'Vanguard']))}" maxlength="24" />
+    <h3>Troops</h3>${sliderRows(S.army, UNITS, 'mu')}
+    <h3>General</h3>${generalSelect('div-general')}
+    <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Muster', 'muster-yes', '', { id: 'muster-yes' })}</div>`);
+}
+function showFormFleet() {
+  showModal(`<h2>⚓ Form a fleet</h2><p class="small muted">Ships leave the home harbour and sail as one fleet.</p>
+    <input type="text" id="fleet-name" placeholder="Fleet name" value="${esc(pick(['Royal', 'Northern', 'Storm', 'Golden', 'Iron']) + ' ' + pick(['Squadron', 'Armada', 'Flotilla', 'Fleet']))}" maxlength="24" />
+    <h3>Ships</h3>${sliderRows(S.harbor, SHIPS, 'fl')}
+    <h3>Admiral</h3>${generalSelect('fleet-general')}
+    <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Set sail', 'fleet-yes', '', { id: 'fleet-yes' })}</div>`);
+}
+function readSliders(prefix) { const o = {}; document.querySelectorAll(`[data-${prefix}]`).forEach((r) => { o[r.dataset[prefix]] = +r.value; }); return o; }
+function showBoxOpening(box, reward) {
+  const r = reward.rarity;
+  showModal(`<div class="box-open"><div class="chest shake" id="chest">${box.icon}</div><p class="muted">Opening ${box.name}…</p></div>`);
+  const token = UI.boxToken;
+  setTimeout(() => {
+    if (el('modal').hidden || token !== UI.boxToken || !el('chest')) return;
+    let body;
+    if (reward.kind === 'general') {
+      const g = reward.general;
+      body = `<div class="portrait r-${r}">${g.icon}</div><div class="rarity r-${r}">${RARITY[r].name} General</div><div class="reward-title">${g.name}</div>
+        ${reward.dup ? `<p class="small">${reward.max ? `Already 5★ — converted to 🪙${reward.gold}` : `Duplicate! Now ${'★'.repeat(reward.stars)}`}</p>` : '<p class="small">A new general joins your court! Assign them in the Generals tab.</p>'}
+        <div style="max-width:260px;margin:auto;text-align:left">${statBars(generalStats(g.id))}</div>`;
+    } else if (reward.kind === 'item') body = `<div style="font-size:70px">${ITEMS[reward.item].icon}</div><div class="reward-title">${reward.qty}× ${ITEMS[reward.item].name}</div><p class="small muted">${ITEMS[reward.item].desc}</p>`;
+    else body = `<div style="font-size:70px">💰</div><div class="reward-title">Treasure!</div><p style="font-size:18px">${costHtml(reward.bundle)}</p>`;
+    el('modal-card').innerHTML = `<div class="box-open" style="--r:${RARITY[r].color}"><div class="burst"><div class="reward" id="box-reward">${body}</div></div></div>
+      <div class="actions" style="justify-content:center">${btn('Collect', 'close-modal', '', { cls: 'ghost' })}${btn('Open another', 'open-box', box.id, { disabled: !canAfford(box.cost) })}</div>`;
+    if (r === 'legendary' || r === 'epic') celebrate();
+  }, 1300);
+}
+
+/* ---------- view / tab ---------- */
+function setView(v) {
+  UI.view = v;
+  document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  if (v === 'world') { UI.placing = null; updatePlacingHint(); UI.fx.length = 0; }
+  UI.hover = -1; el('tooltip').hidden = true;
+  el('minimap').hidden = v !== 'world' || !SETTINGS.minimap;
+  UI.lastPanelHtml = ''; UI.panelDirty = true;
+  if (S) renderPanel(true);
+}
+function setTab(t) {
+  UI.tab = t;
+  document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
+  UI.lastPanelHtml = ''; el('panel-body').scrollTop = 0;
+  if (S) renderPanel(true);
+}
+function updatePlacingHint() {
+  const h = el('placing-hint');
+  h.hidden = !UI.placing;
+  if (UI.placing) h.innerHTML = `Placing ${BUILDINGS[UI.placing].icon} ${BUILDINGS[UI.placing].name} — click a hex${UI.placing === 'wall' ? ' (drag to paint)' : ''} <button class="btn sm ghost" data-action="cancel-place">Cancel (Esc)</button>`;
+}
+function selectEntity(kind, id) {
+  UI.selEntity = { kind, id };
+  const e = selectedEntity();
+  if (!e) return;
+  if (UI.view !== 'world') setView('world');
+  CAM.world.centerOn(e.at);
+  setTab('info');
+}
+
+/* ---------- actions ---------- */
+const findEnt = (arg) => { const [k, id] = arg.split(':'); return (k === 'division' ? S.divisions : S.fleets).find((e) => e.id === id); };
+const ACTIONS = {
+  place(t) { const l = buildLockReason(t); if (l) return toast(l, 'bad'); setView('kingdom'); setTab('info'); UI.placing = t; UI.selected = null; updatePlacingHint(); },
+  'cancel-place'() { UI.placing = null; updatePlacingHint(); },
+  select(id) { UI.selected = +id; setView('kingdom'); setTab('info'); },
+  deselect() { UI.selected = null; UI.selHex = -1; },
+  upgrade(id) { upgradeBuilding(S.buildings.find((b) => b.id === +id)); },
+  demolish(id) { showModal(`<h2>Demolish?</h2><p>You will get 40% of its cost back.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Demolish', 'demolish-yes', id, { cls: 'red' })}</div>`); },
+  'demolish-yes'(id) { closeModal(); demolish(S.buildings.find((b) => b.id === +id)); },
+  'clear-obstacle'(i) { if (clearObstacle(+i)) UI.selHex = -1; },
+  train(arg) { const [u, n] = arg.split(':'); const m = trainUnits(u, +n); if (m) toast(`Training ${m} ${UNITS[u].name}${m > 1 ? 's' : ''}`); },
+  'build-ship'(arg) { const [t, n] = arg.split(':'); const m = buildShips(t, +n); if (m) toast(`${SHIPS[t].name} laid down at the shipyard`); },
+  'cancel-queue'(id) { cancelQueue(S.buildings.find((b) => b.id === +id)); },
+  research(id) { startResearch(id); },
+  tab(t) { setTab(t); },
+  trade(arg) {
+    const [kind, r] = arg.split(':'), port = S.buildings.filter((b) => b.type === 'port' && b.level > 0).sort((a, b) => b.level - a.level)[0];
+    if (!port) return;
+    if (kind === 'sell') { if (S.res[r] < 200) return toast(`Need 200 ${RES_META[r].name}`, 'bad'); S.res[r] -= 200; gain({ gold: Math.round(200 * (0.5 + 0.1 * port.level + 0.1 * R('trade'))) }); }
+    else { if (!pay({ gold: Math.round(100 * (2.2 - 0.15 * port.level - 0.1 * R('trade'))) })) return toast('Not enough gold', 'bad'); gain({ [r]: 100 }); }
+  },
+  'world-deselect'() { UI.worldSel = -1; },
+  'focus-kingdom'(kid) { const k = S.kingdoms[+kid]; UI.worldSel = k.capital; setView('world'); CAM.world.centerOn(k.capital); setTab('info'); },
+  'focus-hex'(i) { UI.worldSel = +i; setView('world'); CAM.world.centerOn(+i); setTab('info'); },
+  'focus-entity'() { const e = selectedEntity(); if (e) CAM.world.centerOn(e.at); },
+  'select-entity'(arg) { const [k, id] = arg.split(':'); selectEntity(k, id); },
+  'deselect-entity'() { UI.selEntity = null; },
+  claim(i) { claimTile(+i); },
+  scout(i) { sendScouts(+i, +(el('scout-count') ? el('scout-count').value : 1)); },
+  order(kind) { issueOrder(selectedEntity(), kind, UI.worldSel); },
+  return(arg) { const e = findEnt(arg); if (e) giveOrder(e, 'return', isFleet(e) ? S.world.harbor : S.world.capital); },
+  diplo(arg) { const [k, id] = arg.split(':'); DIPLO[k](S.kingdoms[+id]); },
+  muster() { showMuster(); },
+  'muster-yes'() { const d = createDivision(el('div-name').value, readSliders('mu'), el('div-general').value || null); if (d) { closeModal(); toast(`⚔️ ${d.name} mustered`, 'good'); } },
+  'form-fleet'() { showFormFleet(); },
+  'fleet-yes'() { const f = createFleet(el('fleet-name').value, readSliders('fl'), el('fleet-general').value || null); if (f) { closeModal(); toast(`⚓ ${f.name} formed`, 'good'); } },
+  reinforce(id) {
+    const d = S.divisions.find((x) => x.id === id);
+    showModal(`<h2>➕ Reinforce ${esc(d.name)}</h2>${sliderRows(S.army, UNITS, 'rf', 'none')}<div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reinforce', 'reinforce-yes', id)}</div>`);
+  },
+  'reinforce-yes'(id) { reinforceDivision(S.divisions.find((x) => x.id === id), readSliders('rf')); closeModal(); },
+  disband(id) { disbandDivision(S.divisions.find((x) => x.id === id)); },
+  'disband-fleet'(id) { disbandFleet(S.fleets.find((x) => x.id === id)); },
+  'rename-entity'(arg) { const e = findEnt(arg); showModal(`<h2>Rename</h2><input type="text" id="ent-name" value="${esc(e.name)}" maxlength="24" /><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Save', 'rename-entity-yes', arg)}</div>`); },
+  'rename-entity-yes'(arg) { const e = findEnt(arg), v = el('ent-name').value.trim(); if (v) e.name = v.slice(0, 24); closeModal(); },
+  invite(kid) { inviteKingdom(+kid); },
+  kick(kid) { kickMember(+kid); },
+  join(id) { joinAlliance(id); },
+  leave() { leaveAlliance(); },
+  'toggle-open'() { const a = allianceOf(S.allianceId); a.open = !a.open; },
+  donate(arg) { const [r, v] = arg.split(':'); donate(r, +v); },
+  'chat-send'() { const i = el('chat-input'); playerChat(i.value); i.value = ''; i.blur(); },
+  emblem(e) { UI.allianceDraft.emblem = e; },
+  color(c) { UI.allianceDraft.color = c; },
+  'create-alliance'() { const d = UI.allianceDraft; d.name = el('alliance-name').value; if (createAlliance(d.name, d.color, d.emblem)) UI.allianceDraft = null; },
+  'use-item'(k) { useItem(k); },
+  'open-box'(id) { openBox(id); },
+  menu() { showMenu(); },
+  settings() { showSettings(); },
+  help(section) { showHelp(section); },
+  'close-modal'() { closeModal(); },
+  begin() { S.name = (el('welcome-name').value || 'Ironcrown').trim().slice(0, 24) || 'Ironcrown'; S.started = true; closeModal(); save(); toast(`Long live ${S.name}!`, 'good'); },
+  rename() { const v = el('rename-input').value.trim().slice(0, 24); if (v) { S.name = v; save(); toast('Kingdom renamed'); } closeModal(); },
+  save() { save(); API.push(true); toast('Game saved', 'good'); },
+  export() {
+    const data = btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+    showModal(`<h2>Export save</h2><p class="small muted">Copy this code somewhere safe.</p><textarea readonly onclick="this.select()">${data}</textarea><div class="actions">${btn('Close', 'close-modal', '', { cls: 'ghost' })}</div>`);
+    navigator.clipboard?.writeText(data).then(() => toast('Save code copied'), () => {});
+  },
+  import() { showModal(`<h2>Import save</h2><textarea id="import-data"></textarea><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Import', 'import-yes')}</div>`); },
+  'import-yes'() {
+    try { const d = JSON.parse(decodeURIComponent(escape(atob(el('import-data').value.trim())))); if (d.version !== SAVE_VERSION) throw 0; S = d; deriveKingdom(); deriveWorld(); fogDirty = true; save(); closeModal(); resetView(); toast('Save imported', 'good'); }
+    catch { toast('Invalid save code', 'bad'); }
+  },
+  reset() { showModal(`<h2>Reset everything?</h2><p>Your kingdom will be lost forever.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reset', 'reset-yes', '', { cls: 'red' })}</div>`); },
+  'reset-yes'() { storage.del(SAVE_KEY); newGame(); fogDirty = true; resetView(); showWelcome(); },
+  'zoom-in'() { const c = CAM[UI.view]; c.zoomAt(CW / 2, CH / 2, 1.25); },
+  'zoom-out'() { const c = CAM[UI.view]; c.zoomAt(CW / 2, CH / 2, 0.8); },
+  'zoom-home'() { if (UI.view === 'world') { CAM.world.z = 1; CAM.world.centerOn(S.world.capital); } else { CAM.kingdom.z = 1; CAM.kingdom.centerOn(HALL_HEX); } },
+};
+function issueOrder(e, kind, i) {
+  if (!e || i < 0) return;
+  const extra = {};
+  if (kind === 'blockade') { const k = S.kingdoms[S.world.owner[i]]; return giveOrder(e, 'blockade', k.capital, { kid: k.id }) && toast(`⚓ ${e.name} sails to blockade ${k.name}`); }
+  if (kind === 'hunt') extra.target = (S.aiFleets.find((x) => x.at === i) || {}).id;
+  if (kind === 'intercept') extra.target = (S.aiArmies.find((x) => x.at === i) || {}).id;
+  if (giveOrder(e, kind, i, extra) && e.path.length) toast(`${isFleet(e) ? '⚓' : '⚔️'} ${e.name}: ${kind} → ${hexName(i)} (ETA ${fmtTime(etaOf(e))})`);
+}
+function resetView() {
+  UI.selected = null; UI.placing = null; UI.worldSel = -1; UI.selEntity = null; UI.selHex = -1;
+  CAM.kingdom.z = 1.15; CAM.kingdom.centerOn(HALL_HEX); CAM.world.z = 1; CAM.world.centerOn(S.world.capital);
+  setView('kingdom'); setTab('info');
+}
+
+/* ---------- input ---------- */
+const keysDown = new Set();
+const mouse = { x: -1, y: -1, inside: false };
+function bindInput() {
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-action]');
+    if (t && !t.disabled && ACTIONS[t.dataset.action]) { ACTIONS[t.dataset.action](t.dataset.arg); UI.panelDirty = true; renderPanel(true); updateHud(); }
+    const tab = e.target.closest('[data-tab]'); if (tab) setTab(tab.dataset.tab);
+    const view = e.target.closest('[data-view]'); if (view) setView(view.dataset.view);
+    const bs = e.target.closest('[data-bspeed]');
+    if (bs) { Battle.speed = +bs.dataset.bspeed; document.querySelectorAll('[data-bspeed]').forEach((x) => x.classList.toggle('active', x === bs)); }
+    if (e.target.id === 'battle-skip') Battle.skip();
+    if (e.target.id === 'battle-close') Battle.close();
+    if (e.target === el('modal') && S.started) closeModal();
+  });
+  el('panel').addEventListener('pointerdown', () => { UI.pointerDown = true; });
+  window.addEventListener('pointerup', () => setTimeout(() => { UI.pointerDown = false; }, 0));
+  document.addEventListener('input', (e) => {
+    const d = e.target.dataset;
+    for (const p of ['mu', 'fl', 'rf']) if (d[p] !== undefined) el(`${p}-${d[p]}`).textContent = `${e.target.value}/${e.target.max}`;
+    if (e.target.id === 'alliance-name' && UI.allianceDraft) UI.allianceDraft.name = e.target.value;
+  });
+  document.addEventListener('change', (e) => {
+    const d = e.target.dataset;
+    if (d.setting) {
+      const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      SETTINGS[d.setting] = d.setting === 'zoomSpeed' ? +v : v;
+      saveSettings();
+      if (d.setting === 'minimap') el('minimap').hidden = UI.view !== 'world' || !SETTINGS.minimap;
+    }
+    if (d.assign) { const [k, id] = e.target.value.split(':'); if (k === 'none') unassignGeneral(d.assign); else assignGeneral(d.assign, k, id); UI.panelDirty = true; e.target.blur(); renderPanel(true); }
+  });
+  document.addEventListener('keydown', (e) => {
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+    if (e.key === 'Enter' && e.target.id === 'chat-input') return ACTIONS['chat-send']();
+    if (e.key === 'Enter' && e.target.id === 'welcome-name') return ACTIONS.begin();
+    if (typing) return;
+    if (e.key === 'Escape') {
+      if (!el('modal').hidden && S.started) closeModal();
+      else if (UI.placing) ACTIONS['cancel-place']();
+      else { UI.selected = null; UI.worldSel = -1; UI.selEntity = null; UI.selHex = -1; }
+      UI.panelDirty = true;
+    }
+    if (!el('modal').hidden) return;
+    const k = e.key.toLowerCase();
+    if (k === '?' || k === 'h') showHelp();
+    if (k === 'k') setView('kingdom');
+    if (k === 'm') setView('world');
+    if (k === '+' || k === '=') ACTIONS['zoom-in']();
+    if (k === '-') ACTIONS['zoom-out']();
+    if (k === ' ' || k === 'home') { e.preventDefault(); ACTIONS['zoom-home'](); }
+    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) { keysDown.add(k); if (k.startsWith('arrow')) e.preventDefault(); }
+  });
+  document.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
+  window.addEventListener('blur', () => keysDown.clear());
+
+  // --- canvas pointer handling: click, drag-to-pan, pinch-zoom, wall painting ---
+  const pointers = new Map();
+  let drag = null, pinchDist = 0, lastPaint = -1;
+  const local = (e) => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const hexAt = (p) => { const cam = CAM[UI.view]; const [wx, wy] = cam.toWorld(p.x, p.y); return (UI.view === 'world' ? WG : KG).at(wx, wy); };
+  const canDragPan = () => SETTINGS.panMode !== 'keys';
+  cv.addEventListener('pointerdown', (e) => {
+    cv.setPointerCapture(e.pointerId);
+    const p = local(e);
+    pointers.set(e.pointerId, p);
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinchDist = dist(a.x, a.y, b.x, b.y); drag = null; return; }
+    drag = { x: p.x, y: p.y, sx: p.x, sy: p.y, moved: false, button: e.button, paint: UI.placing === 'wall' && e.button === 0 };
+    if (drag.paint) { const i = hexAt(p); if (placeBuilding('wall', i)) lastPaint = i; if (buildLockReason('wall')) { UI.placing = null; updatePlacingHint(); } }
+  });
+  cv.addEventListener('pointermove', (e) => {
+    const p = local(e);
+    mouse.x = p.x; mouse.y = p.y; mouse.inside = true;
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, p);
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()], d = dist(a.x, a.y, b.x, b.y);
+      if (pinchDist) CAM[UI.view].zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
+      pinchDist = d;
+      return;
+    }
+    UI.hover = hexAt(p);
+    if (drag) {
+      if (drag.paint) {
+        const i = UI.hover;
+        if (i !== lastPaint && UI.placing === 'wall' && !placementError('wall', i) && !buildLockReason('wall')) { placeBuilding('wall', i); lastPaint = i; }
+      } else if (dist(p.x, p.y, drag.sx, drag.sy) > 6 && (canDragPan() || e.pointerType === 'touch')) {
+        drag.moved = true;
+        const inv = SETTINGS.invertDrag ? -1 : 1;
+        CAM[UI.view].pan((p.x - drag.x) * inv, (p.y - drag.y) * inv);
+        cv.style.cursor = 'grabbing';
+      }
+      drag.x = p.x; drag.y = p.y;
+    }
+    updateTooltip(p);
+  });
+  const end = (e) => {
+    const p = local(e);
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+    cv.style.cursor = '';
+    if (drag && !drag.moved && !drag.paint) handleClick(p, drag.button);
+    drag = null; lastPaint = -1;
+  };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); drag = null; });
+  cv.addEventListener('pointerleave', () => { mouse.inside = false; UI.hover = -1; el('tooltip').hidden = true; });
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); const p = local(e); CAM[UI.view].zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015 * SETTINGS.zoomSpeed)); }, { passive: false });
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // minimap: click / drag to jump
+  const mm = el('minimap');
+  const mmMove = (e) => { const r = mm.getBoundingClientRect(); CAM.world.x = ((e.clientX - r.left) / r.width) * WG.pw; CAM.world.y = ((e.clientY - r.top) / r.height) * WG.ph; CAM.world.clamp(); };
+  mm.addEventListener('pointerdown', (e) => { mm.setPointerCapture(e.pointerId); mmMove(e); mm.dataset.drag = '1'; });
+  mm.addEventListener('pointermove', (e) => { if (mm.dataset.drag) mmMove(e); });
+  mm.addEventListener('pointerup', () => { delete mm.dataset.drag; });
+
+  new ResizeObserver(resize).observe(el('stage-wrap'));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
+  window.addEventListener('beforeunload', save);
+}
+function handleClick(p, button) {
+  const cam = CAM[UI.view], [wx, wy] = cam.toWorld(p.x, p.y);
+  if (UI.view === 'kingdom') {
+    const i = KG.at(wx, wy);
+    if (UI.placing) {
+      const type = UI.placing;
+      if (placeBuilding(type, i) && (type !== 'wall' || buildLockReason('wall'))) { UI.placing = null; updatePlacingHint(); }
+    } else if (button === 0) {
+      const b = buildingAt(i);
+      UI.selected = b ? b.id : null;
+      UI.selHex = !b && obstacleAt(i) ? i : -1;
+      if (b || UI.selHex >= 0) setTab('info');
+    } else { UI.selected = null; UI.selHex = -1; }
+  } else {
+    const i = WG.at(wx, wy);
+    // did we click one of our banners/ships?
+    const hit = S.divisions.concat(S.fleets).map((e) => { const [x, y] = entPos(e); const [sx, sy] = cam.toScreen(x, y - 8); return [e, dist(sx, sy, p.x, p.y)]; }).filter(([, d]) => d < 22).sort((a, b) => a[1] - b[1])[0];
+    const sel = selectedEntity();
+    if (button === 2 && sel && i >= 0) {
+      const o = ordersFor(sel, i), best = o.find(([k]) => k !== 'move') || o[0];
+      UI.worldSel = i;
+      if (best) issueOrder(sel, best[0], i); else toast('No valid order for that hex', 'bad');
+    } else if (hit && button === 0) { UI.selEntity = { kind: isFleet(hit[0]) ? 'fleet' : 'division', id: hit[0].id }; setTab('info'); }
+    else if (button === 0) { UI.worldSel = i; setTab('info'); }
+  }
+  renderPanel(true);
+}
+function updateTooltip(p) {
+  const i = UI.hover, tip = el('tooltip');
+  let html = null;
+  if (i >= 0 && UI.view === 'kingdom') {
+    const b = buildingAt(i), o = obstacleAt(i);
+    if (b && !UI.placing) html = `<b>${BUILDINGS[b.type].name}</b> · level ${b.level}${b.build > 0 ? `<br>🔨 ${fmtTime(b.build)}` : ''}${b.research ? `<br>🎓 ${RESEARCH[b.research.id].name}` : ''}`;
+    else if (o && !UI.placing) html = `<b>${o === 'tree' ? 'Trees' : 'Rocks'}</b><br>Click to clear`;
+    else if (UI.placing) { const err = placementError(UI.placing, i); html = err ? `⛔ ${esc(err)}` : `✅ Build ${BUILDINGS[UI.placing].name} here`; }
+  } else if (i >= 0) {
+    const seen = isSeen(i), o = S.world.owner[i], f = S.world.feat[i];
+    html = seen ? `<b>${TERRAIN[S.world.terrain[i]].name}</b> ${hexName(i)}${f ? `<br>${FEATURES[f.type].icon} ${FEATURES[f.type].name}` : ''}${o === -2 ? '<br>Your territory' : o >= 0 ? '<br>' + S.kingdoms[o].name : ''}` : `<b>Unexplored</b> ${hexName(i)}<br>Send scouts, a fleet or a division`;
+    const sel = selectedEntity();
+    if (sel && seen) { const o2 = ordersFor(sel, i); if (o2.length) html += `<br><span class="muted">Right-click: ${(o2.find(([k]) => k !== 'move') || o2[0])[1]}</span>`; }
+  }
+  if (!html) { tip.hidden = true; return; }
+  tip.innerHTML = html; tip.hidden = false;
+  tip.style.left = Math.min(p.x + 14, CW - 220) + 'px'; tip.style.top = Math.min(p.y + 14, CH - 60) + 'px';
+}
+// Keyboard / edge scrolling, applied every frame.
+function inputFrame(dt) {
+  if (!el('modal').hidden) return;
+  const cam = CAM[UI.view], sp = 700 * dt;
+  let dx = 0, dy = 0;
+  if (SETTINGS.panMode !== 'drag') {
+    if (keysDown.has('a') || keysDown.has('arrowleft')) dx += sp;
+    if (keysDown.has('d') || keysDown.has('arrowright')) dx -= sp;
+    if (keysDown.has('w') || keysDown.has('arrowup')) dy += sp;
+    if (keysDown.has('s') || keysDown.has('arrowdown')) dy -= sp;
+  }
+  if (SETTINGS.edgeScroll && mouse.inside) {
+    const m = 22;
+    if (mouse.x < m) dx += sp; if (mouse.x > CW - m) dx -= sp;
+    if (mouse.y < m) dy += sp; if (mouse.y > CH - m) dy -= sp;
+  }
+  if (dx || dy) cam.pan(dx, dy);
+}

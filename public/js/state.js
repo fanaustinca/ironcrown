@@ -1,0 +1,160 @@
+/* ==========================================================================
+   State: the saved game (S), transient UI state, settings, persistence,
+   optional Python backend sync.
+   ========================================================================== */
+'use strict';
+
+const params = new URLSearchParams(location.search);
+const SLOT = (params.get('slot') || 'main').replace(/[^\w-]/g, '');
+const SAVE_KEY = 'ironcrown-save-' + SLOT;
+const PID_KEY = 'ironcrown-player-id';
+const SETTINGS_KEY = 'ironcrown-settings';
+
+const KG = new HexGrid(KW, KH, K_HEX);     // kingdom map grid
+const WG = new HexGrid(WW, WH, W_HEX);     // world map grid
+const HALL_HEX = KG.idx(HALL_COL, HALL_ROW);
+
+let S = null;
+const UI = {
+  view: 'kingdom', tab: 'info', selected: null, placing: null, worldSel: -1, selEntity: null,
+  hover: -1, fx: [], panelDirty: true, lastPanelHtml: '', pointerDown: false, logUnread: false,
+  attackDraft: null, allianceDraft: null, divisionDraft: null, boxToken: 0, alerts: [],
+};
+
+const storage = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
+};
+
+/* ---- Settings (per browser, not part of the save) ---- */
+const DEFAULT_SETTINGS = {
+  panMode: 'drag',        // 'drag' | 'keys' | 'both'
+  invertDrag: false,
+  edgeScroll: false,
+  zoomSpeed: 1,
+  showGrid: true,
+  prodNumbers: true,
+  particles: true,
+  battleMode: 'watch',    // 'watch' | 'auto'
+  minimap: true,
+};
+let SETTINGS = { ...DEFAULT_SETTINGS };
+try { Object.assign(SETTINGS, JSON.parse(storage.get(SETTINGS_KEY) || '{}')); } catch { /* defaults */ }
+function saveSettings() { storage.set(SETTINGS_KEY, JSON.stringify(SETTINGS)); }
+
+/* ---- New game ---- */
+function newGame(name) {
+  S = {
+    version: SAVE_VERSION, gameVersion: GAME_VERSION, seed: Math.floor(Math.random() * 1e9), name: name || 'Ironcrown',
+    time: 0, savedAt: Date.now(), started: false,
+    res: { gold: 1000, iron: 350, diamonds: 25, lumber: 850, food: 600 },
+    buildings: [], nextId: 1, cleared: [],
+    army: { archer: 8, swordsman: 6, pikeman: 0, horseman: 0, catapult: 0, scout: 3 },
+    harbor: { sloop: 0, cog: 0, galley: 0, frigate: 0, galleon: 0 },
+    divisions: [], fleets: [], research: {},
+    generals: [{ id: 'aldric', stars: 1 }], castellan: 'aldric',
+    items: { warhorn: 1, salve: 0, hammer: 1, scroll: 0, map: 0, winds: 0, shield: 0 },
+    boosts: { warhorn: false, salve: false }, shield: 0, winds: 0,
+    world: null, kingdoms: [], aiArmies: [], aiFleets: [], missions: [], intel: {},
+    alliances: [], allianceId: null,
+    log: [], stats: { battlesWon: 0, battlesLost: 0, navalWon: 0, navalLost: 0, raidsRepelled: 0, raidsLost: 0, boxesOpened: 0, scouted: 0, ruinsExplored: 0, wrecksSalvaged: 0, researched: 0 },
+    aiTimer: AI_TICK, raidTimer: 540, pirateTimer: 420,
+  };
+  deriveKingdom();
+  addBuilding('hall', HALL_HEX, 1);
+  const spots = kingdomStartSpots();
+  addBuilding('goldmine', spots[0], 1);
+  addBuilding('lumbermill', spots[1], 1);
+  addBuilding('farm', spots[2], 1);
+  generateWorld();
+  createAlliances();
+  // Starting division so the world map is alive from minute one.
+  createDivision('1st Legion', { archer: 4, swordsman: 4 }, null, true);
+  log('Your reign begins. Build up your kingdom, then explore the world map.', 'info');
+}
+
+function save() {
+  if (!S) return false;
+  S.savedAt = Date.now();
+  S.gameVersion = GAME_VERSION;
+  const ok = storage.set(SAVE_KEY, JSON.stringify(S));
+  API.push();
+  return ok;
+}
+function load() {
+  const raw = storage.get(SAVE_KEY);
+  if (!raw) return false;
+  try {
+    const data = JSON.parse(raw);
+    if (!data || data.version !== SAVE_VERSION) {
+      if (data && data.version) UI.oldSave = data.version;
+      return false;
+    }
+    S = data;
+    deriveKingdom();
+    deriveWorld();
+    return true;
+  } catch { return false; }
+}
+
+// Offline progress: simulate time the tab was closed (capped, no raids).
+function catchUp() {
+  const away = Math.min(OFFLINE_CAP, (Date.now() - S.savedAt) / 1000);
+  if (away < 5) return;
+  const before = { ...S.res };
+  let t = away;
+  while (t > 0) { const d = Math.min(2, t); step(d, true); t -= d; }
+  const gains = RES.map((k) => [k, S.res[k] - before[k]]).filter(([, v]) => Math.abs(v) >= 1);
+  if (gains.length) {
+    log(`While you were away (${fmtTime(away)}) your kingdom produced ` + gains.map(([k, v]) => `${RES_META[k].icon}${fmt(v)}`).join(' '), 'good');
+    setTimeout(() => toast(`Welcome back! ${fmtTime(away)} of progress collected.`, 'good'), 500);
+  }
+}
+
+/* ---- Optional Python backend (server/server.py). Absent on GitHub Pages. ---- */
+const API = {
+  online: false, lastPush: 0, pid: null,
+  async init() {
+    this.pid = storage.get(PID_KEY) || uid() + uid();
+    storage.set(PID_KEY, this.pid);
+    if (location.protocol === 'file:') return;
+    try {
+      const r = await fetch('api/health', { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      this.online = !!(j && j.ok);
+    } catch { this.online = false; }
+  },
+  async pull() {
+    if (!this.online) return null;
+    try { const r = await fetch(`api/save/${this.pid}-${SLOT}`, { cache: 'no-store' }); return r.ok ? (await r.json()).state : null; } catch { return null; }
+  },
+  push(force) {
+    if (!this.online || !S) return;
+    const now = Date.now();
+    if (!force && now - this.lastPush < 15000) return;
+    this.lastPush = now;
+    const body = JSON.stringify({ meta: { name: S.name, power: Math.round(totalPower()), hall: hallLevel() }, state: S });
+    fetch(`api/save/${this.pid}-${SLOT}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      .then((r) => { el('sync').classList.toggle('online', r.ok); el('sync-label').textContent = r.ok ? 'synced' : 'local'; })
+      .catch(() => {});
+  },
+  async leaderboard() {
+    if (!this.online) return null;
+    try { const r = await fetch('api/leaderboard', { cache: 'no-store' }); return r.ok ? (await r.json()).players : null; } catch { return null; }
+  },
+};
+
+function log(text, kind = 'info') {
+  if (!S) return;
+  S.log.unshift({ t: S.time, text, kind });
+  if (S.log.length > 120) S.log.length = 120;
+  if (UI.tab !== 'log') UI.logUnread = true;
+  UI.panelDirty = true;
+}
+
+/* ---- Calendar ---- */
+function calendar(t = S.time) {
+  const day = Math.floor(t / DAY_LENGTH);
+  return { day: (day % 10) + 1, season: SEASONS[Math.floor(day / 10) % 4], seasonIdx: Math.floor(day / 10) % 4, year: Math.floor(day / 40) + 1 };
+}

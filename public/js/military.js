@@ -1,0 +1,296 @@
+/* ==========================================================================
+   Military: unit & ship stats, training, shipbuilding, divisions, fleets,
+   generals, items and mystery boxes.
+   ========================================================================== */
+'use strict';
+
+const INFANTRY = ['archer', 'swordsman', 'pikeman'];
+const emptyArmy = () => ({ archer: 0, swordsman: 0, pikeman: 0, horseman: 0, catapult: 0, scout: 0 });
+const emptyFleet = () => ({ sloop: 0, cog: 0, galley: 0, frigate: 0, galleon: 0 });
+const armyHousing = (units) => Object.entries(units || {}).reduce((s, [k, n]) => s + (UNITS[k] ? UNITS[k].housing * n : 0), 0);
+const queuedHousing = () => S.buildings.reduce((s, b) => s + (b.queue && BUILDINGS[b.type].trains ? b.queue.reduce((q, u) => q + UNITS[u].housing, 0) : 0), 0);
+const totalHousing = () => armyHousing(S.army) + S.divisions.reduce((s, d) => s + armyHousing(d.units), 0) + queuedHousing();
+const armyCap = () => 10 + 15 * hallLevel() + S.buildings.filter((b) => BUILDINGS[b.type].trains).reduce((s, b) => s + 3 * b.level, 0);
+const queueLimit = (b) => 5 + 5 * b.level;
+const trainerOf = (u) => S.buildings.filter((b) => b.type === UNITS[u].from && b.level > 0).sort((a, b) => b.level - a.level)[0];
+const shipyardLevel = () => Math.max(0, ...S.buildings.filter((b) => b.type === 'shipyard').map((b) => b.level));
+function allShips() {
+  const s = { ...S.harbor };
+  for (const f of S.fleets) for (const t of SHIP_TYPES) s[t] += f.ships[t] || 0;
+  return s;
+}
+const shipCount = (ships) => SHIP_TYPES.reduce((s, t) => s + (ships[t] || 0), 0);
+const queuedShips = () => S.buildings.reduce((s, b) => s + (b.type === 'shipyard' ? b.queue.length : 0), 0);
+const navalCap = () => 4 + 5 * S.buildings.filter((b) => b.type === 'shipyard').reduce((s, b) => s + b.level, 0);
+const transportCapacity = () => { const s = allShips(); return SHIP_TYPES.reduce((c, t) => c + SHIPS[t].cap * s[t], 0); };
+const divisionLimit = () => 2 + Math.floor(hallLevel() / 2);
+const fleetLimit = () => 1 + countOf('shipyard') + Math.floor(hallLevel() / 3);
+
+/* ---- Generals ---- */
+const generalData = (id) => GENERALS.find((g) => g.id === id);
+const ownedGeneral = (id) => S.generals.find((g) => g.id === id);
+function generalStats(id) {
+  const g = generalData(id), o = ownedGeneral(id) || { stars: 1 };
+  const m = 1 + 0.1 * (o.stars - 1);
+  return { atk: Math.min(100, Math.round(g.atk * m)), hp: Math.min(100, Math.round(g.hp * m)), spd: Math.min(100, Math.round(g.spd * m)) };
+}
+function generalMult(id, kind) {
+  if (!id || !ownedGeneral(id)) return { atk: 1, hp: 1, spd: 1 };
+  const gs = generalStats(id), g = generalData(id);
+  const spec = g.spec && (g.spec === kind || (g.spec === 'fleet' && SHIPS[kind])) ? 0.15 : 0;
+  return { atk: 1 + gs.atk / 200 + spec, hp: 1 + gs.hp / 200 + spec, spd: 1 + gs.spd / 400 };
+}
+function generalPost(id) {
+  if (S.castellan === id) return { kind: 'castellan', label: '🏰 Castellan (home defense)' };
+  const d = S.divisions.find((x) => x.general === id);
+  if (d) return { kind: 'division', id: d.id, label: `⚔️ ${d.name}` };
+  const f = S.fleets.find((x) => x.general === id);
+  if (f) return { kind: 'fleet', id: f.id, label: `⚓ ${f.name}` };
+  return { kind: 'none', label: 'Idle' };
+}
+function unassignGeneral(id) {
+  if (S.castellan === id) S.castellan = null;
+  S.divisions.forEach((d) => { if (d.general === id) d.general = null; });
+  S.fleets.forEach((f) => { if (f.general === id) f.general = null; });
+}
+function assignGeneral(id, kind, targetId) {
+  if (!ownedGeneral(id)) return;
+  unassignGeneral(id);
+  if (kind === 'castellan') { S.castellan = id; }
+  else if (kind === 'division') { const d = S.divisions.find((x) => x.id === targetId); if (d) { d.general = id; } }
+  else if (kind === 'fleet') { const f = S.fleets.find((x) => x.id === targetId); if (f) { f.general = id; } }
+  UI.panelDirty = true;
+}
+function grantGeneral(id) {
+  const o = ownedGeneral(id), g = generalData(id);
+  if (!o) { S.generals.push({ id, stars: 1 }); return { dup: false }; }
+  if (o.stars < 5) { o.stars++; return { dup: true, stars: o.stars }; }
+  const gold = 400 * RARITY[g.rarity].dupXp;
+  gain({ gold }, true);
+  return { dup: true, max: true, gold };
+}
+
+/* ---- Stats ---- */
+function unitStats(u, gid, boosts = {}) {
+  const U = UNITS[u], t = trainerOf(u), lvl = t ? t.level : 1;
+  const lm = 1 + 0.12 * (lvl - 1), gm = generalMult(gid, u), ab = allianceBonus();
+  let atk = U.atk * lm * gm.atk * (1 + ab.atk) * (1 + 0.1 * R('weapons'));
+  let hp = U.hp * lm * gm.hp;
+  let speed = U.speed * gm.spd, range = U.range;
+  if (INFANTRY.includes(u)) hp *= 1 + 0.1 * R('armor');
+  if (u === 'archer') { atk *= 1 + 0.15 * R('longbows'); range *= 1 + 0.1 * R('longbows'); }
+  if (u === 'horseman') { speed *= 1 + 0.15 * R('horses'); hp *= (1 + 0.08 * R('horses')) * (1 + 0.12 * R('barding')); atk *= 1 + 0.12 * R('barding'); }
+  if (u === 'catapult') atk *= 1 + 0.15 * Math.max(0, R('siege') - 1);
+  if (boosts.warhorn) atk *= 1.3;
+  if (boosts.salve) hp *= 1.3;
+  return { atk, hp, speed, range, level: lvl };
+}
+function shipStats(t, gid, boosts = {}) {
+  const Sh = SHIPS[t], lvl = Math.max(1, shipyardLevel()), lm = 1 + 0.1 * (lvl - 1), gm = generalMult(gid, t);
+  let atk = Sh.atk * lm * gm.atk * (1 + 0.12 * R('cannons')), hp = Sh.hp * lm * gm.hp * (1 + 0.12 * R('hulls'));
+  const speed = Sh.speed * gm.spd * (1 + 0.12 * R('navigation')) * (1 + 0.1 * R('sails')) * (S.winds > 0 ? 1.5 : 1);
+  if (boosts.warhorn) atk *= 1.3;
+  if (boosts.salve) hp *= 1.3;
+  return { atk, hp, speed, range: Sh.range, level: lvl };
+}
+const unitPower = (st) => st.atk + st.hp / 5;
+const armyPower = (units, gid) => COMBAT_UNITS.reduce((s, u) => s + (units[u] ? unitPower(unitStats(u, gid)) * units[u] : 0), 0);
+const fleetPower = (ships, gid) => SHIP_TYPES.reduce((s, t) => s + (ships[t] ? unitPower(shipStats(t, gid)) * ships[t] : 0), 0);
+function totalPower() {
+  return armyPower(S.army, S.castellan) + S.divisions.reduce((s, d) => s + armyPower(d.units, d.general), 0)
+    + fleetPower(S.harbor, null) + S.fleets.reduce((s, f) => s + fleetPower(f.ships, f.general), 0) + defenseRating();
+}
+function divisionSpeed(d) {
+  const types = COMBAT_UNITS.filter((u) => d.units[u] > 0).concat(d.units.scout > 0 ? ['scout'] : []);
+  if (!types.length) return 1;
+  return Math.min(...types.map((u) => unitStats(u, d.general).speed)) * (1 + 0.12 * R('logistics')) * calendar().season.march;
+}
+function fleetSpeed(f) {
+  const types = SHIP_TYPES.filter((t) => f.ships[t] > 0);
+  if (!types.length) return 1;
+  return Math.min(...types.map((t) => shipStats(t, f.general).speed));
+}
+
+/* ---- Training ---- */
+function trainError(u) {
+  const U = UNITS[u], b = trainerOf(u);
+  if (!b) return `Build a ${BUILDINGS[U.from].name} first`;
+  if (U.research && !R(U.research)) return `Research ${RESEARCH[U.research].name} first`;
+  return null;
+}
+function trainUnits(u, n) {
+  const err = trainError(u);
+  if (err) { toast(err, 'bad'); return 0; }
+  const U = UNITS[u], b = trainerOf(u);
+  let made = 0;
+  for (let i = 0; i < n; i++) {
+    if (b.queue.length >= queueLimit(b)) { if (!made) toast('Training queue is full', 'bad'); break; }
+    if (totalHousing() + U.housing > armyCap()) { if (!made) toast('Army housing is full — upgrade the Main Hall or military buildings', 'bad'); break; }
+    if (!pay(U.cost)) { if (!made) toast('Not enough resources', 'bad'); break; }
+    if (!b.queue.length) b.trainLeft = trainTime(u);
+    b.queue.push(u);
+    made++;
+  }
+  UI.panelDirty = true;
+  return made;
+}
+const trainTime = (u) => UNITS[u].time * (1 - 0.15 * R('drill'));
+const shipCost = (t) => scaleCost(SHIPS[t].cost, 1 - 0.1 * R('shipwright'));
+const shipTime = (t) => SHIPS[t].time * (1 - 0.15 * R('shipwright'));
+function cancelQueue(b) {
+  const x = b.queue.pop();
+  if (!x) return;
+  gain(UNITS[x] ? UNITS[x].cost : shipCost(x));
+  if (!b.queue.length) b.trainLeft = 0;
+  UI.panelDirty = true;
+}
+function shipError(t) {
+  if (!countOf('shipyard') || shipyardLevel() < 1) return 'Build a Shipyard on the coast first';
+  if (shipyardLevel() < SHIPS[t].lvl) return `Requires a level ${SHIPS[t].lvl} Shipyard`;
+  return null;
+}
+function buildShips(t, n) {
+  const err = shipError(t);
+  if (err) { toast(err, 'bad'); return 0; }
+  const yards = S.buildings.filter((b) => b.type === 'shipyard' && b.level >= SHIPS[t].lvl).sort((a, b) => a.queue.length - b.queue.length);
+  let made = 0;
+  for (let i = 0; i < n; i++) {
+    const b = yards.sort((a, c) => a.queue.length - c.queue.length)[0];
+    if (b.queue.length >= 3 + 2 * b.level) { if (!made) toast('Shipyard queue is full', 'bad'); break; }
+    if (shipCount(allShips()) + queuedShips() >= navalCap()) { if (!made) toast('Naval capacity reached — upgrade your shipyards', 'bad'); break; }
+    if (!pay(shipCost(t))) { if (!made) toast('Not enough resources', 'bad'); break; }
+    if (!b.queue.length) b.trainLeft = shipTime(t);
+    b.queue.push(t);
+    made++;
+  }
+  UI.panelDirty = true;
+  return made;
+}
+function stepQueue(b, dt) {
+  if (!b.queue || !b.queue.length || b.level < 1) return;
+  const ship = BUILDINGS[b.type].builds;
+  b.trainLeft -= dt * (ship ? 1 : 1 + allianceBonus().train);
+  while (b.trainLeft <= 0 && b.queue.length) {
+    const x = b.queue.shift();
+    if (ship) { S.harbor[x]++; log(`${SHIPS[x].name} launched from the shipyard.`, 'good'); }
+    else S.army[x]++;
+    UI.panelDirty = true;
+    if (b.queue.length) b.trainLeft += ship ? shipTime(b.queue[0]) : trainTime(b.queue[0]); else b.trainLeft = 0;
+  }
+}
+
+/* ---- Divisions & fleets ---- */
+function createDivision(name, units, gid) {
+  if (S.divisions.length >= divisionLimit()) { toast(`Division limit (${divisionLimit()}) — upgrade the Main Hall`, 'bad'); return null; }
+  const take = {};
+  for (const u of Object.keys(UNITS)) take[u] = Math.min(units[u] || 0, S.army[u] || 0);
+  if (armyHousing(take) <= 0) { toast('A division needs at least one soldier', 'bad'); return null; }
+  for (const u of Object.keys(take)) S.army[u] -= take[u];
+  const d = { id: 'd' + uid(), name: (name || '').trim().slice(0, 24) || `Division ${S.divisions.length + 1}`,
+    color: DIVISION_COLORS[S.divisions.length % DIVISION_COLORS.length], units: { ...emptyArmy(), ...take },
+    general: null, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle' };
+  S.divisions.push(d);
+  if (gid) assignGeneral(gid, 'division', d.id);
+  log(`${d.name} was mustered (${armyHousing(take)} troops).`, 'good');
+  UI.panelDirty = true;
+  return d;
+}
+const atHome = (d) => d.at === S.world.capital && !d.path.length;
+function disbandDivision(d) {
+  if (!atHome(d)) { toast('Divisions can only disband at the capital', 'bad'); return; }
+  for (const u of Object.keys(d.units)) S.army[u] += d.units[u];
+  S.divisions = S.divisions.filter((x) => x !== d);
+  if (UI.selEntity && UI.selEntity.id === d.id) UI.selEntity = null;
+  log(`${d.name} disbanded into the garrison.`, 'info');
+  UI.panelDirty = true;
+}
+function reinforceDivision(d, units) {
+  if (!atHome(d)) { toast('Reinforce divisions at the capital', 'bad'); return; }
+  for (const u of Object.keys(units)) { const n = Math.min(units[u], S.army[u]); S.army[u] -= n; d.units[u] += n; }
+  UI.panelDirty = true;
+}
+function createFleet(name, ships, gid) {
+  if (S.fleets.length >= fleetLimit()) { toast(`Fleet limit (${fleetLimit()}) — build more shipyards`, 'bad'); return null; }
+  const take = {};
+  for (const t of SHIP_TYPES) take[t] = Math.min(ships[t] || 0, S.harbor[t] || 0);
+  if (shipCount(take) <= 0) { toast('A fleet needs at least one ship', 'bad'); return null; }
+  for (const t of SHIP_TYPES) S.harbor[t] -= take[t];
+  const f = { id: 'f' + uid(), name: (name || '').trim().slice(0, 24) || `Fleet ${S.fleets.length + 1}`, ships: { ...emptyFleet(), ...take },
+    general: null, at: S.world.harbor, path: [], prog: 0, order: null, status: 'idle' };
+  S.fleets.push(f);
+  if (gid) assignGeneral(gid, 'fleet', f.id);
+  log(`${f.name} set sail with ${shipCount(take)} ships.`, 'good');
+  UI.panelDirty = true;
+  return f;
+}
+const fleetHome = (f) => f.at === S.world.harbor && !f.path.length;
+function disbandFleet(f) {
+  if (!fleetHome(f)) { toast('Fleets can only disband in the home harbor', 'bad'); return; }
+  for (const t of SHIP_TYPES) S.harbor[t] += f.ships[t];
+  S.fleets = S.fleets.filter((x) => x !== f);
+  if (UI.selEntity && UI.selEntity.id === f.id) UI.selEntity = null;
+  UI.panelDirty = true;
+}
+
+/* ---- Items ---- */
+function useItem(k) {
+  if (!S.items[k]) return;
+  if (k === 'warhorn' || k === 'salve') {
+    if (S.boosts[k]) { toast('Already active for your next battle'); return; }
+    S.boosts[k] = true; toast(`${ITEMS[k].icon} ${ITEMS[k].name} will empower your next battle`, 'good');
+  } else if (k === 'hammer') {
+    const pending = S.buildings.filter((b) => b.build > 0);
+    if (!pending.length) { toast('Nothing is under construction', 'bad'); return; }
+    pending.forEach(completeBuilding);
+  } else if (k === 'scroll') {
+    const unis = S.buildings.filter((b) => b.research);
+    if (!unis.length) { toast('No research in progress', 'bad'); return; }
+    unis.forEach(completeResearch);
+  } else if (k === 'map') {
+    const target = S.kingdoms.find((kk) => !S.world.seen[kk.capital]) || S.kingdoms[0];
+    reveal(target.capital, 5);
+    toast(`The map reveals the lands of ${target.name}`, 'good');
+  } else if (k === 'winds') {
+    S.winds = 300; toast('🌬️ Favourable winds fill your sails for 5 minutes', 'good');
+  } else if (k === 'shield') {
+    S.shield += 900; toast('Peace Shield raised for 15 minutes', 'good');
+  }
+  S.items[k]--;
+  UI.panelDirty = true;
+}
+
+/* ---- Mystery boxes ---- */
+function rollBox(box) {
+  const kind = weighted(box.kinds);
+  if (kind === 'general') {
+    const rarity = weighted(box.rarity);
+    const g = pick(GENERALS.filter((x) => x.rarity === rarity));
+    return { kind, rarity, general: g, ...grantGeneral(g.id) };
+  }
+  const tier = box.resScale >= 10 ? 'epic' : box.resScale >= 4 ? 'rare' : 'common';
+  if (kind === 'item') {
+    const k = pick(Object.keys(ITEMS)), qty = box.resScale >= 4 ? randi(1, 2) : 1;
+    S.items[k] += qty;
+    return { kind, item: k, qty, rarity: tier };
+  }
+  const bundle = {};
+  for (let i = 0, n = randi(2, 3); i < n; i++) { const k = pick(['gold', 'lumber', 'iron', 'food']); bundle[k] = (bundle[k] || 0) + Math.round(rand(250, 600) * box.resScale / 10) * 10; }
+  if (box.resScale >= 4 || Math.random() < 0.2) bundle.diamonds = Math.round(rand(3, 8) * Math.sqrt(box.resScale));
+  gain(bundle, true);
+  return { kind: 'res', bundle, rarity: tier };
+}
+function openBox(id) {
+  const box = BOXES.find((b) => b.id === id);
+  if (!pay(box.cost)) { toast('Not enough ' + Object.keys(box.cost).map((k) => RES_META[k].name).join('/'), 'bad'); return null; }
+  const reward = rollBox(box);
+  S.stats.boxesOpened++;
+  log(`Opened a ${box.name}: ${rewardText(reward)}.`, reward.kind === 'general' && reward.rarity !== 'common' ? 'good' : 'info');
+  showBoxOpening(box, reward);
+  UI.panelDirty = true;
+  return reward;
+}
+function rewardText(r) {
+  if (r.kind === 'general') return `${RARITY[r.rarity].name} general ${r.general.name}` + (r.max ? ` (max stars → +${r.gold} gold)` : r.dup ? ` (duplicate → ${r.stars}★)` : '');
+  if (r.kind === 'item') return `${r.qty}× ${ITEMS[r.item].name}`;
+  return Object.entries(r.bundle).map(([k, v]) => `${RES_META[k].icon}${fmt(v)}`).join(' ');
+}

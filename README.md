@@ -1,85 +1,108 @@
-# 👑 Ironcrown
+# 👑 Ironcrown `v2.0.0`
 
-A browser kingdom-strategy game in the spirit of Clash of Clans. Build a kingdom, mine resources, train armies,
-recruit legendary generals, scout the fog of war, raid rival AI kingdoms and forge alliances.
+A browser kingdom-strategy game and living world simulation. Build a kingdom on a hex map, research technologies at
+universities, raise armies and navies, group them into divisions and fleets, explore ruins, caves, forts and
+shipwrecks, fight pirates, and trade with, ally or conquer six AI kingdoms that grow on their own.
 
 **▶ Play: https://fanaustinca.github.io/ironcrown/**
 
-Pure HTML5 Canvas + vanilla JavaScript: no framework and no build step. There's also an optional Python server for
-cloud saves and a global leaderboard.
+It's pure HTML5 Canvas + vanilla JavaScript with no build step and no dependencies. It also runs straight from
+`public/index.html` on disk. An optional Python server adds cloud saves and a global leaderboard.
 
 ## Features
 
 | Area | What's in it |
 |---|---|
-| **Kingdom** | Upgradeable **Main Hall** (6 levels) that unlocks land, buildings, building levels, builders and storage. You can drag to paint **Walls**. **Ports** have to touch the sea; their trade ships earn gold, open a market and let you claim islands. Defenses: **Archer Tower, Cannon, Arcane Spire**. |
-| **Economy** | **Gold, Iron and Diamond Mines, Lumber Mills, Farms.** Resources accrue in real time, including offline progress (up to 8h). Storage caps scale with the Main Hall. Troops eat food. |
-| **Military** | **Archery Range, Barracks, Stables** train Archers, Swordsmen and Horsemen, and the **Scout Lodge** trains Scouts. Barracks level raises unit stats. Battles are animated on canvas with squads, arrows, cannonballs and towers, at 1×/2×/4× speed or skipped. |
-| **Generals** | You start with *Sir Aldric*. 13 generals across 4 rarities, each with **Attack / Health / Speed** bars that boost the whole army, plus unit specialties. Duplicates add stars. |
-| **Mystery Boxes** | Wooden Crate, Silver Chest and Royal Reliquary show their odds up front. Rewards are rare generals, resource bundles or items (War Horn, Healing Salve, Builder's Hammer, Ancient Map, Peace Shield). |
-| **World** | A 34×22 procedurally generated map with fog of war, 6 AI kingdoms and 4 personalities. AI kingdoms **expand, upgrade their keeps, build defenses, train troops, fight each other and raid you**. Scouts reveal land and bring back intel. You can claim neutral land for production bonuses. |
-| **Alliances** | Join the three AI alliances or found your own. You can invite or kick kingdoms, toggle recruitment, donate to level the alliance, and use alliance chat. Shared bonuses cover production, attack, defense and training. Allies never raid you and they reinforce you when you're attacked. |
-| **Persistence** | Autosaves to localStorage. With the Python server running it also syncs to the cloud and shows a global leaderboard. There's export/import too. |
+| **Hex kingdom** | A hexagonal land that grows one ring per Main Hall level (6 levels). The coastline has curves, beaches, foam and shallow-water bands. You can clear trees and rocks, paint walls by dragging, and build 18 building types. |
+| **Economy** | Gold, Iron, Diamonds, Lumber and Food, plus storage caps and Warehouses. Upkeep is food for troops and gold for ships. Four seasons affect harvests and marching. There's a Port market, and offline progress runs for up to 8 hours. |
+| **Research** | Universities run one project each: 26 technologies in 4 trees, each with up to 3 levels. They include faster ships, faster horses, better armour, siege engineering, cartography, banking and engineering. |
+| **Army & divisions** | Archers, Swordsmen, Pikemen, Horsemen, Catapults and Scouts, with counter bonuses. You group troops into named divisions with generals and march them on the map to assault capitals, invade hexes, explore ruins and caves, capture forts, claim land and intercept raiders. |
+| **Navy & fleets** | The Shipyard builds Sloops, Cogs, Galleys, Frigates and Galleons. Grouped into fleets, they can sail, salvage wrecks, burn pirate coves, blockade coastal kingdoms and hunt enemy fleets. Cogs and Galleons ferry divisions across the sea. |
+| **World simulation** | A procedurally generated hex continent with islands, lakes, mountains, hills, forests, deserts and swamps, under a fog of war. Six AI kingdoms expand, upgrade, build, train, launch fleets and march armies on each other and on you. Pirates roam. |
+| **Generals** | 17 generals in 4 rarities, each with Attack / Health / Speed bars. They can be posted to divisions, fleets, or as Castellan of the home garrison. Specialists and admirals get extra bonuses. |
+| **Diplomacy & alliances** | Gifts, non-aggression treaties, trade pacts, tribute, war and peace. You can join AI alliances or found your own, then invite, donate and chat. Allies reinforce you. |
+| **Mystery boxes** | Three boxes with their odds shown. Rewards are generals, resources or items. |
+| **Battles** | An animated land and naval battle simulator with towers, cannons, catapult splash and ship broadsides. You can watch at 1×/2×/4×, skip, or auto-resolve. |
+| **Camera** | Drag to pan, scroll or pinch to zoom, a minimap, and zoom buttons. In Settings you can switch to drag, WASD/arrows, or both, and turn on edge scrolling. |
+| **UI** | Detailed HUD with calendar, builders, research, housing, navy and power. It also has threat alerts with ETAs, rich tooltips, a 14-section help guide (`H` / `?`), settings, and a version label. |
 
 ## Project layout
 
 ```
-public/            ← the game (this folder is what GitHub Pages serves)
-  index.html       HUD, canvas stage, side panel, modals
-  style.css        theme + responsive layout
-  game.js          engine: data tables, economy, military, world/AI, alliances, battle sim, renderers, UI
-server/server.py   optional backend (stdlib only): static files + /api/save + /api/leaderboard
-tests/e2e.mjs      Playwright headless-browser test suite (17 tests, screenshots)
+public/                 ← the game; GitHub Pages serves this folder
+  index.html            HUD, map canvas, side panel, modals
+  style.css
+  js/                   classic scripts sharing one global scope (load order in index.html)
+    data.js             constants & data tables (buildings, units, ships, research, generals…)
+    util.js             RNG, noise, formatting, HexGrid (odd-r), A* pathfinding
+    state.js            save format, settings, persistence, backend sync, calendar
+    economy.js          kingdom hex land, obstacles, construction, production, bonuses
+    military.js         unit/ship stats, training, shipbuilding, divisions, fleets, generals, boxes
+    research.js         universities & technology
+    world.js            world generation, features, territory, scouting
+    sim.js              movement & orders, AI kingdoms/armies/fleets, pirates, raids, diplomacy, step()
+    alliances.js
+    battle.js           land & naval battle simulator + viewer
+    render-common.js    camera, organic coastlines, building art, particles
+    render-kingdom.js   kingdom map
+    render-world.js     world map, fog of war, minimap
+    help.js             in-game help guide
+    ui-panels.js        HUD & side-panel tabs
+    ui-actions.js       modals, actions, map input (drag / keys / edge / pinch / wheel)
+    main.js             game loop, boot, test hooks, dev cheats
+server/server.py        optional backend (stdlib only): static files + /api/save + /api/leaderboard
+tests/e2e.mjs           Playwright headless-browser suite (27 tests + screenshots)
 .github/workflows/deploy.yml   CI: run tests → deploy public/ to GitHub Pages
-deploy.sh          one-shot git init + gh repo create + Pages setup
+deploy.sh               one-shot git init + gh repo create + Pages setup
 ```
 
 ## Run locally
 
 ```bash
-npm install                      # installs Playwright (tests only; the game has no dependencies)
-npm run serve                    # python3 server/server.py → http://127.0.0.1:8000  (cloud-save mode)
-# or just open public/index.html directly: it runs fully offline with localStorage
+npm install          # Playwright, for the tests only
+npm run serve        # python3 server/server.py → http://127.0.0.1:8000 (with cloud saves)
+# …or just open public/index.html in a browser
 ```
 
-## Headless browser tests
+## Developer cheats (F12)
+
+Open DevTools (F12) → Console and type `cheats.help()`. The commands include `cheats.god()`, `cheats.res(1e5)`,
+`cheats.hall(6)`, `cheats.army(50)`, `cheats.ships(5)`, `cheats.researchAll()`, `cheats.generals()`,
+`cheats.reveal()`, `cheats.time(600)`, `cheats.speed(5)`, `cheats.season(3)`, `cheats.raid()`, `cheats.pirates()`,
+`cheats.peace()` and `cheats.war(kid)`.
+
+## Tests
 
 ```bash
 npx playwright install chromium
-npm test                                         # starts the Python server, drives the real UI headlessly
-npm run test:live                                # the same suite against the live GitHub Pages URL
+npm test             # starts the Python server and drives the real UI headlessly
+npm run test:live    # the same suite against the live GitHub Pages URL
 ```
 
-The suite checks that the canvas actually renders by counting its colours, and it drives these flows through real
-clicks: building on the map, upgrading, training troops, opening mystery boxes, general stat bars, scouting the fog,
-claiming land, a full battle, AI growth over time, founding, donating to and chatting in an alliance, persistence
-across reloads, the Python save API and leaderboard, the mobile layout, and a clean console. Screenshots go to
-`tests/screenshots/`.
+The suite covers:
+
+- the welcome screen and version label
+- hex rendering
+- camera drag, zoom and keyboard mode
+- the help guide
+- building, clearing obstacles and upgrading the hall
+- research
+- training and mustering a division with a general
+- world marching, scouting and fog
+- shipyard → ships → fleet → sailing and salvage
+- ruins exploration
+- a watched capital assault
+- an AI raid march
+- diplomacy, mystery boxes and alliances
+- AI growth, cheats, persistence, the Python API, mobile layout and a clean console
 
 ## Deploy to GitHub Pages
 
-The whole thing is scripted: `./deploy.sh`. These are the equivalent manual commands:
-
 ```bash
-git init -b main
-git add -A
-git commit -m "Ironcrown: kingdom strategy game"
+./deploy.sh                      # or manually:
+git init -b main && git add -A && git commit -m "Ironcrown"
 gh repo create ironcrown --public --source=. --remote=origin --push
-gh api -X POST repos/{owner}/ironcrown/pages -f build_type=workflow   # Pages is built by GitHub Actions
-gh run watch                                                            # tests run, then public/ is deployed
+gh api -X POST repos/{owner}/ironcrown/pages -f build_type=workflow
 ```
 
-After that, every push to `main` re-runs the Playwright tests and redeploys only if they pass.
-
-## How to play
-
-1. **Build** tab → pick a structure → click a tile inside the dashed border. Watch the builder count (🔨).
-2. Build resource buildings first, then upgrade the **Main Hall** to unlock more.
-3. Build an **Archery Range** and **Barracks** and train troops from the **Army** tab. Troops eat food.
-4. **World** view → click a fogged tile → **Send scouts**. Scouting a kingdom gathers intel, which you need before attacking.
-5. Claim neutral land next to your borders for production bonuses. With a Port you can reach the gem-cave islands.
-6. Attack scouted rivals for loot and territory. Build towers and walls, because hostile kingdoms will raid you.
-7. Spend gold and diamonds on **Mystery Boxes** for better generals, then appoint the best one.
-8. Join or found an **Alliance** for shared bonuses and protection.
-
-Console helpers: `ironcrown.state` and `ironcrown.debug.fastForward(600)`.
+After that, every push to `main` runs the Playwright tests and deploys `public/` if they pass.

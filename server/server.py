@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = ROOT / "public"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 MAX_BODY = 2 * 1024 * 1024  # 2 MB per save
-VERSION = 1
+VERSION = 2  # API version; saves carry their own format version
 
 
 class SaveStore:
@@ -138,7 +138,7 @@ class Handler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             return self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid json"})
         state, meta = data.get("state"), data.get("meta", {})
-        if not isinstance(state, dict) or state.get("version") != VERSION:
+        if not isinstance(state, dict) or not isinstance(state.get("version"), int):
             return self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid state"})
         self.store.put(pid, {"state": state, "meta": meta, "updated": int(time.time())})
         return self._json(HTTPStatus.OK, {"ok": True})

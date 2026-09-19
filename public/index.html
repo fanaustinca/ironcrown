@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Ironcrown — Kingdom Strategy</title>
-  <meta name="description" content="Build a kingdom, train armies, recruit generals and conquer rival realms. Runs in your browser." />
+  <meta name="description" content="Build a kingdom on a hex world, research technologies, command divisions and fleets, explore ruins and conquer rival realms. Runs in your browser." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👑</text></svg>" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -15,46 +15,58 @@
       <div class="brand"><span class="crown">👑</span><div><b id="kingdom-name">Ironcrown</b><small id="hall-label">Main Hall 1</small></div></div>
       <div id="resources" class="resources"></div>
       <div class="hud-stats">
+        <span class="chip" title="Season · day · year">📅 <b id="calendar">—</b></span>
         <span class="chip" title="Builders busy / total">🔨 <b id="builders">0/2</b></span>
-        <span class="chip" title="Army housing used / capacity">🛡️ <b id="army-cap">0/25</b></span>
-        <span class="chip" title="Total kingdom power">⚡ <b id="power">0</b></span>
+        <span class="chip" title="Universities researching / total">🎓 <b id="research-chip">—</b></span>
+        <span class="chip" title="Troops (all) / housing capacity">🛡️ <b id="army-cap">0/25</b></span>
+        <span class="chip" title="Ships / naval capacity">⚓ <b id="fleet-cap">0/4</b></span>
+        <span class="chip" title="Total power">⚡ <b id="power">0</b></span>
         <span class="chip" id="shield-chip" hidden title="Peace shield active">🕊️ <b id="shield-time"></b></span>
         <span class="chip sync" id="sync" title="Save status">💾 <b id="sync-label">local</b></span>
+        <button class="icon-btn" data-action="help" title="Help (H)">?</button>
+        <button class="icon-btn" data-action="settings" title="Settings">⚙️</button>
         <button class="icon-btn" data-action="menu" title="Menu">☰</button>
       </div>
     </header>
 
     <main id="main">
-      <!-- ===== Canvas stage (Kingdom / World) ===== -->
+      <!-- ===== Map stage ===== -->
       <section id="stage-wrap">
         <div class="view-toggle" role="tablist">
-          <button class="active" data-view="kingdom" role="tab">🏰 Kingdom</button>
-          <button data-view="world" role="tab">🗺️ World</button>
+          <button class="active" data-view="kingdom" role="tab" title="Kingdom (K)">🏰 Kingdom</button>
+          <button data-view="world" role="tab" title="World map (M)">🗺️ World</button>
         </div>
+        <div id="alerts"></div>
         <div id="placing-hint" hidden></div>
         <canvas id="stage" aria-label="Game map"></canvas>
+        <div class="zoom-ctl">
+          <button data-action="zoom-in" title="Zoom in (+)">+</button>
+          <button data-action="zoom-out" title="Zoom out (−)">−</button>
+          <button data-action="zoom-home" title="Recenter (Space)">🏠</button>
+        </div>
+        <canvas id="minimap" hidden title="Minimap — click to jump"></canvas>
+        <div id="version" title="Game version"></div>
         <div id="tooltip" hidden></div>
       </section>
 
       <!-- ===== Side panel ===== -->
       <aside id="panel">
         <nav class="tabs" role="tablist">
-          <button data-tab="info" class="active">🏗️<span>Build</span></button>
-          <button data-tab="army">⚔️<span>Army</span></button>
-          <button data-tab="generals">🎖️<span>Generals</span></button>
-          <button data-tab="shop">🎁<span>Shop</span></button>
-          <button data-tab="alliance">🤝<span>Alliance</span></button>
-          <button data-tab="log">📜<span>Log</span><i id="log-dot" hidden></i></button>
+          <button data-tab="info" class="active"><em id="tab-info-icon">🏗️</em><span id="tab-info-label">Build</span></button>
+          <button data-tab="research"><em>🎓</em><span>Research</span></button>
+          <button data-tab="army"><em>⚔️</em><span>Army</span></button>
+          <button data-tab="navy"><em>⚓</em><span>Navy</span></button>
+          <button data-tab="generals"><em>🎖️</em><span>Generals</span></button>
+          <button data-tab="shop"><em>🎁</em><span>Shop</span></button>
+          <button data-tab="alliance"><em>🤝</em><span>Alliance</span></button>
+          <button data-tab="log"><em>📜</em><span>Log</span><i id="log-dot" hidden></i></button>
         </nav>
         <div id="panel-body"></div>
       </aside>
     </main>
   </div>
 
-  <!-- ===== Modals ===== -->
-  <div id="modal" class="modal" hidden>
-    <div class="modal-card" id="modal-card"></div>
-  </div>
+  <div id="modal" class="modal" hidden><div class="modal-card" id="modal-card"></div></div>
 
   <div id="battle" class="modal" hidden>
     <div class="battle-card">
@@ -73,6 +85,24 @@
   </div>
 
   <div id="toasts"></div>
-  <script src="game.js"></script>
+
+  <!-- Game scripts (classic scripts sharing one global scope; order matters) -->
+  <script src="js/data.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/economy.js"></script>
+  <script src="js/military.js"></script>
+  <script src="js/research.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/alliances.js"></script>
+  <script src="js/battle.js"></script>
+  <script src="js/render-common.js"></script>
+  <script src="js/render-kingdom.js"></script>
+  <script src="js/render-world.js"></script>
+  <script src="js/help.js"></script>
+  <script src="js/ui-panels.js"></script>
+  <script src="js/ui-actions.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>
