@@ -93,22 +93,21 @@ await test('loads, shows the welcome screen, version label and starts', async ()
   assert((await page.textContent('#kingdom-name')) === 'Testoria', 'name in HUD');
 });
 
-await test('one map: the city is drawn on the world map at the capital', async () => {
+await test('one map of small hexes: buildings sit on map hexes around the capital', async () => {
   await page.waitForTimeout(500);
   assert((await canvasRichness('#stage')) > 70, 'detailed canvas');
   const s = await state();
-  assert(s.buildings.find((b) => b.type === 'hall'), 'main hall');
-  const land = await G(() => { const d = window.ironcrown.debug; return d.KG.within(d.HALL_HEX, 4).length; });
-  assert(land === 61, `hexagonal land of radius 4 has 61 hexes (got ${land})`);
+  const hall = s.buildings.find((b) => b.type === 'hall');
+  assert(hall && hall.hex === s.world.capital, 'the Main Hall stands on the capital map hex');
+  assert(s.buildings.every((b) => s.world.owner[b.hex] === -2), 'every building is on land you own');
+  assert(await page.$('[data-view]') === null, 'no separate world-map button');
   await shot('02-kingdom');
-  const inCity = await G(() => cityAlpha());
-  await page.click('[data-view="world"]');
-  await page.waitForTimeout(300);
-  const out = await G(() => ({ ca: cityAlpha(), z: window.ironcrown.CAM.z }));
-  assert(inCity > 0.9 && out.ca < 0.1, `zooming out fades the city into the world map (${inCity} → ${out.ca})`);
+  await page.keyboard.press('m');
+  await page.waitForTimeout(400);
+  assert((await G(() => window.ironcrown.CAM.z)) < 1, 'zoomed out over the world');
   await shot('02b-world-same-map');
-  await page.click('[data-view="kingdom"]');
-  assert((await G(() => cityAlpha())) > 0.9, 'City button flies back into the city');
+  await page.keyboard.press('k');
+  assert((await G(() => window.ironcrown.CAM.z)) > 4, 'K flies back to the capital');
 });
 
 await test('resources accumulate in real time', async () => {
@@ -169,21 +168,24 @@ await test('build a Farm by clicking the build menu and a hex', async () => {
 });
 
 await test('clear trees/rocks from a hex', async () => {
-  const hex = await G(() => { const d = window.ironcrown.debug; return d.KG.within(d.HALL_HEX, 4).find((i) => window.obstacleAt && obstacleAt(i)); });
+  const hex = await G(() => { const s = window.ironcrown.state; return window.ironcrown.debug.WG.within(s.world.capital, 4).find((i) => inLand(i) && obstacleAt(i) && !buildingAt(i)); });
   assert(hex !== undefined, 'an obstacle exists on the land');
   await clickHex('kingdom', hex);
   await page.click('[data-action="clear-obstacle"]');
   assert((await state()).cleared.includes(hex), 'hex cleared');
 });
 
-await test('upgrade the Main Hall and grow the hexagonal land', async () => {
+await test('the Main Hall upgrades without limit and claims more land', async () => {
   const s = await state();
   const hall = s.buildings.find((b) => b.type === 'hall');
+  const land0 = await G(() => playerTiles());
   await clickHex('kingdom', hall.hex);
   await page.click('[data-action="upgrade"]');
   await ff(80);
   assert((await G(() => window.ironcrown.debug.hallLevel())) === 2, 'hall level 2');
-  await G(() => { cheats.hall(3); });
+  assert((await G(() => playerTiles())) > land0, 'the new level claimed a ring of land');
+  const beyond = await G(() => { cheats.hall(7); const b = window.ironcrown.state.buildings.find((x) => x.type === 'hall'); return upgradeError(b); });
+  assert(!beyond || beyond === 'Not enough resources' || beyond.includes('builders'), `level 7 can still be upgraded (${beyond})`);
 });
 
 await test('research at a University', async () => {
@@ -243,11 +245,13 @@ await test('generals: one per division, tavern hire, copies & promotion', async 
 await test('no army cap; edit, split and merge divisions', async () => {
   await G(() => window.ironcrown.debug.give({ gold: 90000, food: 90000, iron: 90000 }));
   await page.click('[data-tab="army"]');
-  for (let k = 0; k < 6; k++) { await page.click('[data-action="train"][data-arg="swordsman:5"]'); await page.click('[data-action="train"][data-arg="archer:5"]'); }
-  await ff(300);
+  await G(() => cheats.army(400));                          // far beyond what the old housing cap allowed
+  const q0 = await G(() => window.ironcrown.state.buildings.find((b) => b.type === 'barracks').queue.length);
+  await page.click('[data-action="train"][data-arg="swordsman:5"]');
+  const q1 = await G(() => window.ironcrown.state.buildings.find((b) => b.type === 'barracks').queue.length);
+  assert(q1 === q0 + 5 && (await G(() => totalHousing() > armyCap())), 'training continues with no army cap');
+  await ff(60);
   const s0 = await state();
-  const over = await G(() => totalHousing() > armyCap());
-  assert(s0.army.swordsman >= 30 && over, `trained past the old housing cap (${s0.army.swordsman} swordsmen)`);
   const d = s0.divisions.find((x) => x.name === 'Test Legion');
   await page.click(`[data-action="edit-troops"][data-arg="${d.id}"]`);
   await page.$eval('input[data-ed="swordsman"]', (e) => { e.value = 20; e.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -266,7 +270,7 @@ await test('no army cap; edit, split and merge divisions', async () => {
 });
 
 await test('world map: hex terrain, fog, minimap, select a division and march', async () => {
-  await page.click('[data-view="world"]');
+  await page.keyboard.press('m');
   await page.waitForTimeout(300);
   assert((await canvasRichness('#stage')) > 40, 'world drawn');
   await page.click('[data-tab="army"]');
@@ -288,7 +292,8 @@ await test('world map: hex terrain, fog, minimap, select a division and march', 
 
 await test('scouts: dispatch a party, click a point, everything on the way is revealed', async () => {
   const s = await state();
-  const k = s.kingdoms[0];
+  const kid = await G(() => { const s = window.ironcrown.state; return s.kingdoms.find((k) => findPath(WG, s.world.capital, k.capital, scoutCost))?.id ?? 0; });
+  const k = s.kingdoms[kid];
   const seen0 = s.world.seen.filter(Boolean).length;
   await page.keyboard.press('Escape');
   await page.click('[data-tab="army"]');
@@ -315,16 +320,22 @@ await test('claim land anywhere and build on it', async () => {
   await clickHex('world', hex);
   await page.click('[data-action="claim"]');
   assert((await state()).world.owner[hex] === -2, 'claimed a hex far from the borders');
-  await page.click('[data-action="tb-build"][data-tb="farmstead"]');
-  assert((await state()).world.bld[hex]?.type === 'farmstead', 'farmstead under construction');
+  const spot = await G((h) => [h].concat(window.ironcrown.debug.WG.neighbors(h)).find((i) => inLand(i) && !placementError('village', i)), hex);
+  assert(spot !== undefined, 'a buildable hex in the claimed land');
+  await G(() => { cheats.build(); });
+  await clickHex('world', spot);
+  await page.click('[data-action="build-at"][data-tb="village"]');
+  const vb = (await state()).buildings.find((b) => b.hex === spot);
+  assert(vb && vb.type === 'village', 'village under construction on far-away land');
   await ff(30);
-  assert((await state()).world.bld[hex].level === 1, 'farmstead built');
+  assert((await state()).buildings.find((b) => b.hex === spot).level === 1, 'village built');
   await shot('07c-territory');
 });
 
 await test('port trains seamen, shipyard builds crewed ships, form a fleet and sail', async () => {
-  await page.click('[data-view="kingdom"]');
+  await page.keyboard.press('k');
   await page.click('[data-tab="info"]');
+  await page.keyboard.press('Escape');
   await page.click('.build-item[data-type="port"]');
   await clickHex('kingdom', await G(() => window.ironcrown.debug.freeHex('port')));
   await ff(30);
@@ -339,11 +350,12 @@ await test('port trains seamen, shipyard builds crewed ships, form a fleet and s
   await clickHex('kingdom', hex);
   await ff(40);
   await page.click('[data-tab="navy"]');
+  const sea0 = (await state()).army.seaman;
   await page.click('[data-action="build-ship"][data-arg="sloop:1"]');
   await page.click('[data-action="build-ship"][data-arg="cog:1"]');
   await ff(40);
   const hs = await state();
-  assert(hs.harbor.cog === 1 && hs.army.seaman < 14, 'ships launched into harbour with their crews aboard');
+  assert(hs.harbor.cog === 1 && hs.army.seaman === sea0 - 14, 'ships launched into harbour with their crews aboard (6 + 8 seamen)');
   await page.click('[data-action="form-fleet"]');
   await page.click('#fleet-yes');
   const f = (await state()).fleets[0];
@@ -478,7 +490,7 @@ await test('diplomacy: gift and declare war', async () => {
   const k0 = (await state()).kingdoms[1];
   await page.keyboard.press('Escape');
   await page.click('[data-tab="info"]');
-  await page.click('[data-view="world"]');
+  await page.keyboard.press('m');
   await page.click('[data-tab="map"]');
   await page.click('[data-action="focus-kingdom"][data-arg="1"]');
   await page.click(`[data-action="diplo"][data-arg="gift:${k0.id}"]`);

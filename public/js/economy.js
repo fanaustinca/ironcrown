@@ -1,72 +1,63 @@
 /* ==========================================================================
-   Kingdom economy: hex land, coast, obstacles, construction, production,
-   storage, research bonuses.
+   Kingdom economy on the one hex map: your land is the hexes you own, and
+   you can build on any of them. The Main Hall has no maximum level.
    ========================================================================== */
 'use strict';
 
-let KT = new Uint8Array(KG.N);       // 1 = land, 0 = water (kingdom map)
-let KDEPTH = new Int16Array(KG.N);    // water depth in hexes from shore
-let KCLEARED = new Set();
-
-// Kingdom-map ↔ world-map coordinates (the city sits on the capital world hex).
-const k2w = (kx, ky) => [WG.cx[S.world.capital] + (kx - KG.cx[HALL_HEX]) * K2W, WG.cy[S.world.capital] + (ky - KG.cy[HALL_HEX]) * K2W];
-const w2k = (wx, wy) => [KG.cx[HALL_HEX] + (wx - WG.cx[S.world.capital]) / K2W, KG.cy[HALL_HEX] + (wy - WG.cy[S.world.capital]) / K2W];
-function deriveKingdom() {
-  // Land/water of the city = the world terrain underneath it.
-  for (let i = 0; i < KG.N; i++) {
-    const [wx, wy] = k2w(KG.cx[i], KG.cy[i]), w = WG.at(wx, wy);
-    KT[i] = w >= 0 && S.world.terrain[w] !== T.WATER ? 1 : 0;
-  }
-  KT[HALL_HEX] = 1;
-  KG.neighbors(HALL_HEX).forEach((n) => { KT[n] = 1; });
-  KDEPTH = KG.distanceField((i) => KT[i] === 1, 6);
-  KCLEARED = new Set(S.cleared);
-}
-// Older saves had a fixed east coast; move buildings that now sit on water.
-function relocateStrandedBuildings() {
-  for (const b of S.buildings) {
-    if (b.type === 'hall' || (KT[b.hex] === 1 && (!BUILDINGS[b.type].coastal || isCoastal(b.hex)))) continue;
-    const old = b.hex; b.hex = -1;
-    const spot = KG.within(HALL_HEX, landRadius()).filter((i) => !placementError(b.type, i)).sort((x, y) => KG.dist(x, old) - KG.dist(y, old))[0];
-    if (spot != null) b.hex = spot; else { b.hex = old; }
-  }
-}
+const capHex = () => S.world.capital;
 const hallLevel = () => (S.buildings.find((b) => b.type === 'hall') || { level: 1 }).level;
 const R = (id) => (S.research && S.research[id]) || 0;
 const countOf = (type) => S.buildings.filter((b) => b.type === type).length;
-const limitOf = (type, hl = hallLevel()) => BUILDINGS[type].limit[hl - 1] || 0;
-const builderCount = () => [2, 2, 3, 3, 4, 4][hallLevel() - 1] + R('engineering');
+function limitOf(type, hl = hallLevel()) {
+  const arr = BUILDINGS[type].limit, base = arr[Math.min(hl, arr.length) - 1] || 0;
+  return base + (hl > arr.length ? Math.floor((hl - arr.length) * (LIMIT_GROW[type] || 0)) : 0);
+}
+const builderCount = () => 2 + Math.floor((hallLevel() - 1) / 2) + R('engineering');
 const buildersBusy = () => S.buildings.filter((b) => b.build > 0).length;
 const landRadius = () => 3 + hallLevel();
-const isPlaza = (i) => i !== HALL_HEX && KG.dist(i, HALL_HEX) === 1;
-const inLand = (i) => i >= 0 && KT[i] === 1 && KG.dist(i, HALL_HEX) <= landRadius();
-const isCoastal = (i) => KT[i] === 1 && KG.neighbors(i).some((n) => KT[n] === 0);
+const buildableTerrain = (i) => i >= 0 && S.world.terrain[i] !== T.WATER && S.world.terrain[i] !== T.MOUNTAIN;
+const isPlaza = (i) => i !== capHex() && WG.dist(i, capHex()) === 1;
+const inLand = (i) => buildableTerrain(i) && S.world.owner[i] === -2;
+const isCoastal = (i) => buildableTerrain(i) && WG.neighbors(i).some((n) => S.world.terrain[n] === T.WATER);
+let KCLEARED = new Set();
+const cleared = (i) => { if (KCLEARED.size !== S.cleared.length) KCLEARED = new Set(S.cleared); return KCLEARED.has(i); };
 
-// Trees & rocks dot the land; clear them for a little lumber / iron.
+// Forests have trees and hills have rocks to clear — except for the building that uses them.
 function obstacleAt(i) {
-  if (i < 0 || KT[i] !== 1 || KG.dist(i, HALL_HEX) < 2 || KCLEARED.has(i)) return null;
-  const h = hash2(i, 77, S.seed);
-  if (h > 0.14) return null;
-  return h < 0.09 ? 'tree' : 'rock';
+  if (!buildableTerrain(i) || WG.dist(i, capHex()) < 2 || cleared(i)) return null;
+  const t = S.world.terrain[i], h = hash2(i, 77, S.seed);
+  if (t === T.FOREST) return 'tree';
+  if (t === T.HILLS && h < 0.6) return 'rock';
+  if (h < 0.05) return h < 0.03 ? 'tree' : 'rock';
+  return null;
 }
+const obstacleOk = (type, o) => (o === 'tree' && type === 'lumbermill') || (o === 'rock' && ['goldmine', 'ironmine', 'diamondmine'].includes(type));
 function clearObstacle(i) {
   const o = obstacleAt(i);
   if (!o) return false;
-  if (!inLand(i)) { toast('Expand your land to reach this', 'bad'); return false; }
+  if (!inLand(i)) { toast('You must own this hex first', 'bad'); return false; }
   if (!pay({ gold: 25 })) { toast('Clearing costs 🪙25', 'bad'); return false; }
-  S.cleared.push(i); KCLEARED.add(i);
+  S.cleared.push(i);
   const loot = o === 'tree' ? { lumber: 60 } : Math.random() < 0.15 ? { iron: 40, diamonds: 2 } : { iron: 40 };
   gain(loot);
-  floatText(KG.cx[i], KG.cy[i], Object.entries(loot).map(([k, v]) => `+${v}${RES_META[k].icon}`).join(' '), '#fff');
+  floatText(WG.cx[i], WG.cy[i], Object.entries(loot).map(([k, v]) => `+${v}${RES_META[k].icon}`).join(' '), '#fff');
   spawnDust(i);
   UI.panelDirty = true;
   return true;
 }
+// Upgrading the Main Hall claims every neutral land hex within its radius.
+function claimRing() {
+  let n = 0;
+  for (const i of WG.within(capHex(), landRadius())) if (S.world.owner[i] === -1 && buildableTerrain(i)) { S.world.owner[i] = -2; n++; }
+  reveal(capHex(), landRadius() + 4);
+  if (n) worldVersion++;
+  return n;
+}
 function kingdomStartSpots() {
-  const ring = KG.within(HALL_HEX, 3).filter((i) => KG.dist(i, HALL_HEX) >= 2 && KT[i] === 1);
-  ring.sort((a, b) => hash2(a, 5, S.seed) - hash2(b, 5, S.seed));
+  const ring = WG.within(capHex(), 3).filter((i) => WG.dist(i, capHex()) >= 2 && inLand(i));
+  ring.sort((a, b) => (obstacleAt(a) ? 1 : 0) - (obstacleAt(b) ? 1 : 0) || hash2(a, 5, S.seed) - hash2(b, 5, S.seed));
   const out = ring.slice(0, 3);
-  out.forEach((i) => { if (obstacleAt(i)) { S.cleared.push(i); KCLEARED.add(i); } });
+  out.forEach((i) => { if (obstacleAt(i)) S.cleared.push(i); });
   return out;
 }
 
@@ -106,17 +97,18 @@ function gain(res, allowOverCap = false) {
 const scaleCost = (c, m) => Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Math.round(v * m)]));
 
 function buildingAt(i) {
-  if (i === HALL_HEX || isPlaza(i)) return S.buildings.find((b) => b.type === 'hall');
+  if (i === capHex() || isPlaza(i)) return S.buildings.find((b) => b.type === 'hall');
   return S.buildings.find((b) => b.hex === i);
 }
 function placementError(type, i) {
   if (i < 0) return 'Outside the map';
-  if (KT[i] === 0) return 'You cannot build on water';
-  if (!inLand(i)) return 'Outside your land — upgrade the Main Hall to expand';
-  if (i === HALL_HEX || isPlaza(i)) return 'The plaza around the Main Hall must stay clear';
+  if (S.world.terrain[i] === T.WATER) return 'You cannot build on water';
+  if (S.world.terrain[i] === T.MOUNTAIN) return 'Mountains are too steep to build on';
+  if (S.world.owner[i] !== -2) return 'You must own this hex — claim it on the map first';
+  if (i === capHex() || isPlaza(i)) return 'The plaza around the Main Hall must stay clear';
   if (buildingAt(i)) return 'Hex occupied';
   const o = obstacleAt(i);
-  if (o) return `Clear the ${o === 'tree' ? 'trees' : 'rocks'} first (click them)`;
+  if (o && !obstacleOk(type, o)) return `Clear the ${o === 'tree' ? 'trees' : 'rocks'} first (click the hex)`;
   if (BUILDINGS[type].coastal && !isCoastal(i)) return 'Must be built on the coast, next to water';
   return null;
 }
@@ -152,7 +144,6 @@ function placeBuilding(type, i) {
 function upgradeError(b) {
   const d = BUILDINGS[b.type];
   if (b.build > 0) return 'Already under construction';
-  if (b.type === 'hall' && b.level >= MAX_HALL) return 'Max level';
   if (b.type !== 'hall' && b.level >= hallLevel()) return 'Upgrade the Main Hall first (level cap = hall level)';
   if (d.hall && hallLevel() < d.hall) return `Requires Main Hall ${d.hall}`;
   if (buildersBusy() >= builderCount()) return 'All builders are busy';
@@ -185,7 +176,7 @@ function completeBuilding(b) {
   const d = BUILDINGS[b.type];
   log(`${d.name} ${b.level === 1 ? 'constructed' : 'upgraded to level ' + b.level}.`, 'good');
   if (b.type !== 'wall') toast(`${d.icon} ${d.name} ${b.level === 1 ? 'is ready' : '→ level ' + b.level}`, 'good');
-  if (b.type === 'hall') { toast(`Main Hall ${b.level}! Your land grows and new buildings unlock.`, 'good'); celebrate(); }
+  if (b.type === 'hall') { const n = claimRing(); toast(`Main Hall ${b.level}! +${n} hexes of land and more buildings unlock.`, 'good'); celebrate(); }
   spawnSparkles(b.hex);
   UI.panelDirty = true;
 }
@@ -206,10 +197,18 @@ function productionOf(b) {
   const d = BUILDINGS[b.type];
   if (b.level < 1) return null;
   const lv = b.level * (1 + 0.25 * (b.level - 1));
-  if (d.produces) return [d.produces, d.rate * lv * (['goldmine', 'ironmine', 'diamondmine'].includes(b.type) ? 1 + 0.15 * R('mining') : 1)];
+  if (d.produces) return [d.produces, d.rate * lv * terrainBoost(b) * (['goldmine', 'ironmine', 'diamondmine'].includes(b.type) ? 1 + 0.15 * R('mining') : 1)];
   if (b.type === 'port') return ['gold', d.rate * lv * (1 + 0.25 * R('trade')) * (S.pirateBlockade > 0 ? 0.5 : 1)];
   if (b.type === 'hall') return ['gold', 0.5 * b.level];
   return null;
+}
+function terrainBoost(b) {
+  const tb = TERRAIN_BOOST[b.type];
+  if (!tb || b.hex == null || b.hex < 0) return 1;
+  const f = S.world.feat[b.hex];
+  if (f && f.type === 'goldvein' && tb.goldvein) return tb.goldvein;
+  if (f && f.type === 'cave' && f.mineral === 'gems' && tb.gems) return tb.gems;
+  return tb[S.world.terrain[b.hex]] || 1;
 }
 function territoryBonus() {
   const r = Object.fromEntries(RES.map((k) => [k, 0]));
@@ -218,12 +217,10 @@ function territoryBonus() {
   for (let i = 0; i < owner.length; i++) {
     if (owner[i] !== -2) continue;
     const b = TERRAIN[terrain[i]].bonus;
-    if (b) for (const [k, v] of Object.entries(b)) r[k] += v;
+    if (b) for (const [k, v] of Object.entries(b)) r[k] += v * HEX_BONUS;
     const f = feat[i];
-    if (f && f.type === 'goldvein') r.gold += 0.6;
-    if (f && f.type === 'cave' && f.explored) for (const [k, v] of Object.entries(MINERALS[f.mineral].bonus)) r[k] += v;
-    const tp = S.world.bld && tbProduction(i);
-    if (tp) for (const [k, v] of Object.entries(tp)) r[k] += v;
+    if (f && f.type === 'goldvein') r.gold += 0.4;
+    if (f && f.type === 'cave' && f.explored) for (const [k, v] of Object.entries(MINERALS[f.mineral].bonus)) r[k] += v * 0.7;
   }
   return r;
 }
@@ -249,4 +246,5 @@ function defenseRating() {
   for (const b of S.buildings) if (BUILDINGS[b.type].def && b.level > 0) d += BUILDINGS[b.type].def * Math.pow(b.level, 1.25);
   return d * (1 + 0.1 * R('masonry')) * (1 + 0.12 * R('fortification')) * (1 + allianceBonus().def);
 }
-const territoryLimit = () => 6 + 5 * hallLevel() + 3 * R('administration');
+// Always covers the Main Hall's own land radius, plus room to claim more.
+const territoryLimit = () => { const r = landRadius(); return 3 * r * (r + 1) + 1 + 40 + 20 * hallLevel() + 20 * R('administration'); };

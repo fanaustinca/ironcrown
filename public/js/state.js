@@ -10,9 +10,7 @@ const SAVE_KEY = 'ironcrown-save-' + SLOT;
 const PID_KEY = 'ironcrown-player-id';
 const SETTINGS_KEY = 'ironcrown-settings';
 
-const KG = new HexGrid(KW, KH, K_HEX);     // kingdom map grid
-const WG = new HexGrid(WW, WH, W_HEX);     // world map grid
-const HALL_HEX = KG.idx(HALL_COL, HALL_ROW);
+const WG = new HexGrid(WW, WH, W_HEX);     // the one map
 
 let S = null;
 const UI = {
@@ -64,8 +62,7 @@ function newGame(name) {
     aiTimer: AI_TICK, raidTimer: 540, pirateTimer: 420,
   };
   generateWorld();
-  deriveKingdom();                       // the city's land & coast come from the world map
-  addBuilding('hall', HALL_HEX, 1);
+  addBuilding('hall', S.world.capital, 1);
   const spots = kingdomStartSpots();
   addBuilding('goldmine', spots[0], 1);
   addBuilding('lumbermill', spots[1], 1);
@@ -90,6 +87,7 @@ function load() {
   if (!raw) return false;
   try {
     const data = JSON.parse(raw);
+    if (data && data.version === 2) { carryOverV2(data); return true; }
     if (!data || data.version !== SAVE_VERSION) {
       if (data && data.version) UI.oldSave = data.version;
       return false;
@@ -97,8 +95,6 @@ function load() {
     S = data;
     deriveWorld();
     migrate();
-    deriveKingdom();
-    relocateStrandedBuildings();
     return true;
   } catch { return false; }
 }
@@ -116,14 +112,49 @@ function migrate() {
     S.fleets.forEach((f) => { if (f.general) f.general = 'g_' + f.general; });
     S.nextGen = 1;
   }
-  S.world.bld = S.world.bld || {};
   S.army.seaman = S.army.seaman || 0;
-  for (const m of S.missions || []) S.army.scout += m.n;   // old scout missions → scouts come home
   S.missions = [];
   for (const d of S.divisions) { d.formation = d.formation || 'line'; d.stance = d.stance || 'advance'; d.target = d.target || 'nearest'; if (d.status === 'fighting') d.status = 'idle'; }
   for (const f of S.fleets) { f.formation = f.formation || 'line'; f.stance = f.stance || 'advance'; f.target = f.target || 'nearest'; if (f.status === 'fighting') f.status = 'idle'; }
   for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex == null) a.targetHex = S.world.capital;
   for (const k of S.kingdoms) { k.wars = k.wars || {}; if (k.guardsInit == null) initAiForces(k); }
+}
+
+// v2 → v3: the map was rebuilt from small hexes. Keep everything portable and
+// rebuild the kingdom around a new capital on the new map.
+function carryOverV2(old) {
+  const name = old.name;
+  newGame(name);
+  const keep = ['res', 'research', 'items', 'stats', 'log', 'time', 'started', 'boosts', 'shield', 'nextGen'];
+  for (const k of keep) if (old[k] !== undefined) S[k] = old[k];
+  S.generals = (old.generals || []).map((g) => ({ uid: g.uid || 'g_' + g.id, id: g.id, stars: g.stars || 1 }));
+  if (!S.generals.length) S.generals = [{ uid: 'g1', id: 'aldric', stars: 1 }];
+  S.castellan = old.castellan && S.generals.some((g) => g.uid === old.castellan) ? old.castellan : null;
+  S.army = { ...emptyArmy(), ...old.army };
+  S.harbor = { ...emptyFleet(), ...old.harbor };
+  for (const sp of old.scouts || []) S.army.scout += sp.n;
+  // buildings: same types & levels, re-placed around the new capital
+  const hall = (old.buildings || []).find((b) => b.type === 'hall');
+  S.buildings = [];
+  addBuilding('hall', S.world.capital, hall ? hall.level : 1);
+  claimRing();
+  for (const b of (old.buildings || []).filter((x) => x.type !== 'hall').sort((a, c) => (BUILDINGS[a.type].coastal ? -1 : 0) - (BUILDINGS[c.type].coastal ? -1 : 0))) {
+    const spot = WG.within(S.world.capital, landRadius() + 6).filter((i) => !placementError(b.type, i) || (placementError(b.type, i) || '').startsWith('Clear'))
+      .filter((i) => S.world.owner[i] === -2 && !buildingAt(i) && (!BUILDINGS[b.type].coastal || isCoastal(i))).sort((x, y) => WG.dist(x, S.world.capital) - WG.dist(y, S.world.capital))[0];
+    if (spot == null) continue;
+    if (obstacleAt(spot)) S.cleared.push(spot);
+    const nb = addBuilding(b.type, spot, Math.max(1, b.level));
+    if (b.queue) nb.queue = []; if (b.research) nb.research = b.research;
+  }
+  S.divisions = [];
+  for (const d of old.divisions || []) {
+    const g = S.generals.find((x) => x.uid === d.general) ? d.general : null;
+    S.divisions.push({ ...d, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle', general: g, units: { ...emptyArmy(), ...d.units } });
+  }
+  S.divisions = S.divisions.filter((d) => armyHousing(d.units) > 0);
+  S.fleets = (old.fleets || []).map((f) => ({ ...f, at: S.world.harbor, path: [], prog: 0, order: null, status: 'idle', ships: { ...emptyFleet(), ...f.ships } }));
+  UI.movedToV3 = true;
+  log('Your kingdom has been moved to the new world map (v3). Buildings, troops, ships, generals and research came with you.', 'info');
 }
 
 // Offline progress: simulate time the tab was closed (capped, no raids).

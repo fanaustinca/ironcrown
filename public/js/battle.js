@@ -14,7 +14,7 @@
 'use strict';
 
 const BW = 960, BH = 520, BDT = 1 / 30, BATTLE_LIMIT = 150;
-const BSC = (7 * W_HEX * SQ3) / BW;        // battlefield units → world pixels
+const BSC = (7 * 30 * SQ3) / BW;           // battlefield units → world pixels (≈ 19 map hexes wide)
 const TEAM_SPOTS = { 1: [[480, 260]], 2: [[190, 260], [770, 260]], 3: [[190, 260], [760, 110], [760, 410]], 4: [[190, 260], [770, 260], [480, 70], [480, 450]] };
 
 const ROLE = (u, naval) => (naval ? (SHIPS[u].range > 100 ? 'ranged' : 'melee') : u === 'archer' ? 'ranged' : u === 'catapult' ? 'siege' : u === 'horseman' ? 'cavalry' : 'melee');

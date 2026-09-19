@@ -14,11 +14,21 @@ function worldLandColor(i) {
 }
 const entPos = (e) => {
   const a = e.at, n = e.path && e.path.length ? e.path[0] : a, p = e.prog || 0;
+  // divisions resting at the capital line up beside the plaza instead of covering the Main Hall
+  if (e.units && !e.ships && a === S.world.capital && !(e.path && e.path.length)) {
+    const k = S.divisions.filter((d) => d.at === a && !d.path.length).indexOf(e);
+    return [WG.cx[a] + W_HEX * (2.6 + 1.3 * k), WG.cy[a] + W_HEX * 2.1];
+  }
   return [lerp(WG.cx[a], WG.cx[n], p), lerp(WG.cy[a], WG.cy[n], p)];
 };
 
+const DS = W_HEX / 30;   // detail art was authored for 30px hexes
 function drawTerrainDetail(g, i, t) {
-  const tt = S.world.terrain[i], x = WG.cx[i], y = WG.cy[i], s = W_HEX, h = (k) => hash2(i, k, 9);
+  g.save(); g.translate(WG.cx[i], WG.cy[i]); g.scale(DS, DS);
+  try { detailArt(g, i, t); } finally { g.restore(); }
+}
+function detailArt(g, i, t) {
+  const tt = S.world.terrain[i], x = 0, y = 0, s = 30, h = (k) => hash2(i, k, 9);
   const winter = calendar().seasonIdx === 3;
   if (tt === T.FOREST) {
     for (let k = 0; k < 4; k++) tree(g, x + (h(k) - 0.5) * s * 1.1, y + (h(k + 4) - 0.5) * s * 0.9 + 4, 5 + h(k + 8) * 3, k % 2);
@@ -48,7 +58,11 @@ function drawTerrainDetail(g, i, t) {
 }
 
 function drawFeature(g, i, f, t) {
-  const x = WG.cx[i], y = WG.cy[i];
+  g.save(); g.translate(WG.cx[i], WG.cy[i]); g.scale(DS * 1.4, DS * 1.4);
+  try { featureArt(g, i, f, t); } finally { g.restore(); }
+}
+function featureArt(g, i, f, t) {
+  const x = 0, y = 0;
   if (f.type === 'goldvein') {
     for (let k = 0; k < 3; k++) { const on = Math.sin(t * 3 + k * 2 + i) > 0.3; g.fillStyle = on ? '#fff6c2' : '#f2c14e'; const sx = x + (k - 1) * 8, sy = y + (k % 2) * 6 - 2; g.fillRect(sx - 3, sy - 0.5, 6, 1.5); g.fillRect(sx - 0.7, sy - 3, 1.5, 6); }
   } else if (f.type === 'cave') {
@@ -106,9 +120,10 @@ function drawBanner(g, x, y, color, icon, count, t, selected, enemy) {
 
 let fogCache = null, fogVersion = -1;
 const FOG_SCALE = 0.25;
+let fogBuiltAt = -1e9;
 function fogLayer() {
-  if (!fogDirty && fogCache) return fogCache;
-  fogDirty = false;
+  if (fogCache && (!fogDirty || performance.now() - fogBuiltAt < 500)) return fogCache;
+  fogDirty = false; fogBuiltAt = performance.now();
   const w = Math.ceil(WG.pw * FOG_SCALE), h = Math.ceil(WG.ph * FOG_SCALE);
   const tiles = document.createElement('canvas'); tiles.width = w + 40; tiles.height = h + 40;
   const tg = tiles.getContext('2d');
@@ -120,91 +135,119 @@ function fogLayer() {
   tg.globalCompositeOperation = 'source-atop';
   const rng = mulberry32(S.seed + 5);
   for (let k = 0; k < 110; k++) {
-    const x = rng() * WG.pw, y = rng() * WG.ph, r = W_HEX * (1.5 + rng() * 3.5);
+    const x = rng() * WG.pw, y = rng() * WG.ph, r = 30 * (1.5 + rng() * 3.5);
     const grd = tg.createRadialGradient(x, y, 0, x, y, r); grd.addColorStop(0, 'rgba(70,78,98,.45)'); grd.addColorStop(1, 'rgba(70,78,98,0)');
     tg.fillStyle = grd; tg.fillRect(x - r, y - r, r * 2, r * 2);
   }
   fogCache = document.createElement('canvas'); fogCache.width = tiles.width; fogCache.height = tiles.height;
   const fg = fogCache.getContext('2d');
-  fg.filter = 'blur(5px)'; fg.drawImage(tiles, 0, 0); fg.filter = 'none';
+  fg.filter = 'blur(3px)'; fg.drawImage(tiles, 0, 0); fg.filter = 'none';
   fg.globalAlpha = 0.55; fg.drawImage(tiles, 0, 0);
   return fogCache;
 }
 
-function drawWorld(g, t, dt) {
-  const cam = CAM, z = cam.z, { terrain, owner, feat } = S.world;
-  const ca = cityAlpha(), es = clamp(1.5 / z, 0.2, 1);   // map icons shrink when zoomed into cities
-  g.setTransform(DPR, 0, 0, DPR, 0, 0);
-  g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH);
-  cam.apply(g);
-  const vis = cam.visible(1), isLandW = (i) => terrain[i] !== T.WATER;
-  drawTerrainBase(g, WG, vis, isLandW, WDEPTH, worldLandColor, S.seed + 1, t, (i) => WORLD_TEX[terrain[i]], worldShade);
-  // water shimmer
-  if (z * W_HEX > 10) {
-    g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 1.2;
-    g.beginPath();
-    for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 5, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 7 + o, y); g.quadraticCurveTo(x + o, y - 3, x + 7 + o, y); }
-    g.stroke();
-  }
-  if (SETTINGS.showGrid && z * W_HEX > 9) { g.strokeStyle = 'rgba(0,0,0,.08)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
-  // territory fill + hex borders
-  const colOf = (o) => (o === -2 ? '#f2c14e' : S.kingdoms[o].color);
-  for (const i of vis) { const o = owner[i]; if (o === -1) continue; g.fillStyle = colOf(o) + '38'; g.beginPath(); WG.hexPath(g, i, 1.0); g.fill(); }
+/* ---- zoomed-out LOD: the whole 16k-hex terrain cached as one image ---- */
+const LIVE_Z = 1.8;                   // at or above this zoom the terrain is drawn live, hex by hex
+let terrainBmp = null, terrainBmpKey = '', ownerBmp = null, ownerBmpVer = -1, ownerBmpAt = -1e9;
+function terrainBitmap() {
+  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}`;
+  if (terrainBmp && key === terrainBmpKey) return terrainBmp;
+  terrainBmpKey = key;
+  const c = terrainBmp || document.createElement('canvas');
+  c.width = Math.ceil(WG.pw); c.height = Math.ceil(WG.ph);
+  const g = c.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, c.width, c.height);
+  const all = Array.from({ length: WG.N }, (_, i) => i), terrain = S.world.terrain, isLandW = (i) => terrain[i] !== T.WATER;
+  GFX.pat.clear(); GFX.ctx = null;
+  drawTerrainBase(g, WG, all, isLandW, WDEPTH, worldLandColor, S.seed + 1, 0, (i) => WORLD_TEX[terrain[i]], worldShade);
+  for (const i of all) if (isLandW(i)) drawTerrainDetail(g, i, 0);
+  GFX.pat.clear(); GFX.ctx = null;
+  terrainBmp = c;
+  return c;
+}
+function ownerBitmap() {
+  if (ownerBmp && (ownerBmpVer === worldVersion || performance.now() - ownerBmpAt < 1000)) return ownerBmp;
+  ownerBmpVer = worldVersion; ownerBmpAt = performance.now();
+  const c = ownerBmp || document.createElement('canvas');
+  c.width = Math.ceil(WG.pw / 2); c.height = Math.ceil(WG.ph / 2);
+  const g = c.getContext('2d');
+  g.setTransform(0.5, 0, 0, 0.5, 0, 0); g.clearRect(0, 0, WG.pw, WG.ph);
+  drawTerritory(g, Array.from({ length: WG.N }, (_, i) => i), 1.2);
+  ownerBmp = c;
+  return c;
+}
+function drawTerritory(g, list, z) {
+  const owner = S.world.owner, colOf = (o) => (o === -2 ? '#f2c14e' : S.kingdoms[o].color);
+  for (const i of list) { const o = owner[i]; if (o === -1) continue; g.fillStyle = colOf(o) + '30'; g.beginPath(); WG.hexPath(g, i, 1.02); g.fill(); }
   g.lineCap = 'round';
-  for (const i of vis) {
+  const byOwner = new Map();
+  for (const i of list) {
     const o = owner[i];
     if (o === -1) continue;
-    g.strokeStyle = colOf(o); g.lineWidth = Math.max(2.5, 3.5 / z);
-    g.beginPath();
     for (let d = 0; d < 6; d++) {
       const n = WG.nb[i * 6 + d];
       if (n >= 0 && owner[n] === o) continue;
-      const [x0, y0] = WG.corner(i, d, 0.93), [x1, y1] = WG.corner(i, d + 1, 0.93);
-      g.moveTo(x0, y0); g.lineTo(x1, y1);
+      if (!byOwner.has(o)) byOwner.set(o, []);
+      byOwner.get(o).push(i, d);
     }
+  }
+  for (const [o, segs] of byOwner) {
+    g.strokeStyle = colOf(o); g.lineWidth = Math.max(1.6, 2.6 / z);
+    g.beginPath();
+    for (let k = 0; k < segs.length; k += 2) { const [x0, y0] = WG.corner(segs[k], segs[k + 1], 0.94), [x1, y1] = WG.corner(segs[k], segs[k + 1] + 1, 0.94); g.moveTo(x0, y0); g.lineTo(x1, y1); }
     g.stroke();
   }
-  // details, features, capitals — row order for overlap
-  const detail = z * W_HEX > 11;
-  const sorted = vis.slice().sort((a, b) => a - b);
+}
+
+function drawWorld(g, t, dt) {
+  const cam = CAM, z = cam.z, { terrain, feat } = S.world;
+  const es = clamp(1.3 / z, 0.22, 1.2);   // map icons keep a steady on-screen size
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH);
+  cam.apply(g);
+  if (shakeAmt > 0) { g.translate(rand(-shakeAmt, shakeAmt) / z, rand(-shakeAmt, shakeAmt) / z); shakeAmt *= 0.85; if (shakeAmt < 0.3) shakeAmt = 0; }
+  const vis = cam.visible(1), isLandW = (i) => terrain[i] !== T.WATER, live = z >= LIVE_Z;
   const cap = S.world.capital;
-  // world-scale scenery is hidden under city footprints once the cities fade in
-  const cities = [[cap, cityWorldRadius(landRadius())]].concat(S.kingdoms.filter((k) => isSeen(k.capital)).map((k) => [k.capital, cityWorldRadius(3 + k.hall)]));
-  const underCity = (i) => ca > 0.4 && cities.some(([c, r]) => dist(WG.cx[i], WG.cy[i], WG.cx[c], WG.cy[c]) < r);
-  for (const i of sorted) {
-    if (underCity(i)) continue;
-    if (detail && isLandW(i)) drawTerrainDetail(g, i, t);
-    const f = feat[i];
-    if (f && isSeen(i)) drawFeature(g, i, f, t);
-    const tb = S.world.bld[i];
-    if (tb && isSeen(i)) drawTerritoryBuilding(g, i, tb, t);
-    else if (isSeen(i)) { const ab = aiTerritoryBuilding(i); if (ab) drawTerritoryBuilding(g, i, ab, t); }
+  const occupied = new Set(S.buildings.map((b) => b.hex));
+  for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) occupied.add(b.hex);
+  if (live) {
+    drawTerrainBase(g, WG, vis, isLandW, WDEPTH, worldLandColor, S.seed + 1, t, (i) => WORLD_TEX[terrain[i]], worldShade);
+    g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 0.6;
+    g.beginPath();
+    for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 2, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 3 + o, y); g.quadraticCurveTo(x + o, y - 1.2, x + 3 + o, y); }
+    g.stroke();
+    if (SETTINGS.showGrid) { g.strokeStyle = 'rgba(0,0,0,.09)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
+    drawTerritory(g, vis, z);
+    const sorted = vis.slice().sort((a, b) => a - b);
+    for (const i of sorted) {
+      if (!isLandW(i) || occupied.has(i) || WG.dist(i, cap) <= 1 || (cleared(i) && S.world.owner[i] === -2)) continue;
+      drawTerrainDetail(g, i, t);
+    }
+  } else {
+    g.drawImage(terrainBitmap(), 0, 0, WG.pw, WG.ph);
+    if (SETTINGS.showGrid && z > 0.8) { g.strokeStyle = 'rgba(0,0,0,.07)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
+    g.drawImage(ownerBitmap(), 0, 0, WG.pw, WG.ph);
   }
-  for (const k of S.kingdoms) drawAiCity(g, k, t);
-  drawCity(g, t, dt);
-  g.globalAlpha = 1 - ca;
-  if (g.globalAlpha > 0.02) {
-    drawCastle(g, WG.cx[cap], WG.cy[cap], 36, '#f2c14e', true);
-    for (const k of S.kingdoms) if (isSeen(k.capital)) drawCastle(g, WG.cx[k.capital], WG.cy[k.capital], 30 + k.hall * 2, k.color, k.hall >= 4);
-  }
-  g.globalAlpha = 1;
+  for (const i of vis) { const f = feat[i]; if (f && isSeen(i) && !occupied.has(i)) drawFeature(g, i, f, t); }
+  drawCityLayer(g, t, dt, vis);
   const icon = (x, y, fn) => { g.save(); g.translate(x, y); g.scale(es, es); fn(); g.restore(); };
   // paths of selected entity & visible enemy raids
   const selE = selectedEntity();
   const pathLine = (e, color, dash) => {
     if (!e.path || !e.path.length) return;
     const [sx, sy] = entPos(e);
-    g.strokeStyle = color; g.lineWidth = 2.5; g.setLineDash(dash); g.lineDashOffset = -t * 20;
+    g.strokeStyle = color; g.lineWidth = 2.5 / z; g.setLineDash(dash.map((v) => v / z)); g.lineDashOffset = (-t * 20) / z;
     g.beginPath(); g.moveTo(sx, sy); for (const p of e.path) g.lineTo(WG.cx[p], WG.cy[p]); g.stroke(); g.setLineDash([]);
     const last = e.path[e.path.length - 1];
-    g.beginPath(); g.arc(WG.cx[last], WG.cy[last], 8, 0, 7); g.stroke();
+    g.beginPath(); g.arc(WG.cx[last], WG.cy[last], 8 / z, 0, 7); g.stroke();
   };
   for (const e of S.divisions.concat(S.fleets)) pathLine(e, e === selE ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)', [6, 6]);
   for (const p of S.scouts) pathLine(p, p === selE ? 'rgba(127,212,255,.95)' : 'rgba(127,212,255,.4)', [3, 5]);
   // guard rings: idle divisions protect their hex and its neighbours
-  for (const d of S.divisions) if (!d.path.length && d.at !== S.world.capital) { g.strokeStyle = 'rgba(242,193,78,.28)'; g.lineWidth = 2; g.setLineDash([3, 4]); g.beginPath(); g.arc(WG.cx[d.at], WG.cy[d.at], W_HEX * 1.9, 0, 7); g.stroke(); g.setLineDash([]); }
+  for (const d of S.divisions) if (!d.path.length && d.at !== S.world.capital) { g.strokeStyle = 'rgba(242,193,78,.28)'; g.lineWidth = 2 / z; g.setLineDash([3 / z, 4 / z]); g.beginPath(); g.arc(WG.cx[d.at], WG.cy[d.at], W_HEX * SQ3 * 2.2, 0, 7); g.stroke(); g.setLineDash([]); }
   for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) pathLine(a, 'rgba(229,83,75,.8)', [4, 6]);
-  for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3; g.beginPath(); WG.hexPath(g, a.targetHex, 0.85); g.stroke(); }
+  for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3 / z; g.beginPath(); WG.hexPath(g, a.targetHex, 1.3); g.stroke(); }
   // scout parties
   for (const p of S.scouts) {
     const [px0, py0] = entPos(p), sel = selE === p;
@@ -252,7 +295,7 @@ function drawWorld(g, t, dt) {
   for (const d of S.divisions) {
     if (d.status === 'fighting') continue;
     const [dx0, dy0] = entPos(d);
-    const off = d.at === cap && !d.path.length ? (S.divisions.indexOf(d) - (S.divisions.length - 1) / 2) * 16 * es : 0;
+    const off = 0;
     const water = isWater(d.at);
     icon(dx0 + off, dy0, () => {
       if (water) drawShip(g, 0, 0, 'cog', d.color, 1, t, false, false, 0.8);
@@ -260,19 +303,20 @@ function drawWorld(g, t, dt) {
     });
   }
   drawCloudShadows(g, WG, t);
-  Battles.draw(g, t);
   // fog
   g.drawImage(fogLayer(), -20 / FOG_SCALE, -20 / FOG_SCALE, fogCache.width / FOG_SCALE, fogCache.height / FOG_SCALE);
+  Battles.draw(g, t);   // battles stay visible above the fog
   // labels (on top of fog so known names stay readable)
-  const fs = clamp(12 / z, 1.6, 40);
+  const fs = 12 / z;
   g.font = `bold ${fs}px sans-serif`; g.textAlign = 'center';
   const label = (text, x, y, c) => { const w = g.measureText(text).width + 10; g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - w / 2, y - fs, w, fs * 1.35); g.fillStyle = c; g.fillText(text, x, y); };
-  label(S.name, WG.cx[cap], WG.cy[cap] + 34, '#f2c14e');
-  for (const k of S.kingdoms) if (isSeen(k.capital)) label(`${k.name} · ${k.hall}${k.atWar ? ' ⚔' : ''}`, WG.cx[k.capital], WG.cy[k.capital] + 32, shade(k.color, 0.35));
+  const off = (r) => Math.max(r * W_HEX * 1.5, 26 / z);
+  label(S.name, WG.cx[cap], WG.cy[cap] + off(landRadius() * 0.35), '#f2c14e');
+  for (const k of S.kingdoms) if (isSeen(k.capital)) label(`${k.name} · ${k.hall}${k.atWar ? ' ⚔' : ''}`, WG.cx[k.capital], WG.cy[k.capital] + off(1 + k.hall * 0.35), shade(k.color, 0.35));
   g.textAlign = 'left';
   // selection + hover
-  if (UI.worldSel >= 0 && !(ca > 0.5 && UI.worldSel === cap)) { g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 0.92); g.stroke(); g.strokeStyle = '#f2c14e'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 1.05); g.stroke(); }
-  if (UI.hover >= 0 && !(ca > 0.5 && UI.khover >= 0)) { g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.hover, 0.95); g.stroke(); }
+  if (UI.worldSel >= 0 && !UI.selected) { g.strokeStyle = '#fff'; g.lineWidth = 2.5 / z; g.beginPath(); WG.hexPath(g, UI.worldSel, 0.92); g.stroke(); g.strokeStyle = '#f2c14e'; g.lineWidth = 1.5 / z; g.beginPath(); WG.hexPath(g, UI.worldSel, 1.05); g.stroke(); }
+  if (UI.hover >= 0 && !UI.placing) { g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = 1.5 / z; g.beginPath(); WG.hexPath(g, UI.hover, 0.95); g.stroke(); }
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
   drawAtmosphere(g);
   drawMinimap(t);
@@ -288,8 +332,9 @@ function drawMinimap() {
   const W = 200, H = Math.round(W * WG.ph / WG.pw), sc = W / WG.pw;
   if (mc.width !== W * DPR) { mc.width = W * DPR; mc.height = H * DPR; mc.style.width = W + 'px'; mc.style.height = H + 'px'; }
   const g = mc.getContext('2d');
-  const key = `${worldVersion}-${S.world.seen.reduce((a, b) => a + b, 0)}-${S.kingdoms.map((k) => kingdomTiles(k.id)).join()}-${playerTiles()}`;
-  if (key !== miniKey || !miniCache) {
+  const key = `${worldVersion}-${seenCount}`;
+  if (!miniCache || (key !== miniKey && performance.now() - (drawMinimap.at || 0) > 1500)) {
+    drawMinimap.at = performance.now();
     miniKey = key;
     miniCache = document.createElement('canvas'); miniCache.width = W * DPR; miniCache.height = H * DPR;
     const m = miniCache.getContext('2d'); m.scale(DPR * sc, DPR * sc);
@@ -299,7 +344,7 @@ function drawMinimap() {
       if (!S.world.seen[i]) m.fillStyle = '#0c0f15';
       else if (o !== -1) m.fillStyle = o === -2 ? '#f2c14e' : S.kingdoms[o].color;
       else m.fillStyle = tt === T.WATER ? DEPTH_COLORS[Math.min(WDEPTH[i], 7) - 1] : TERRAIN[tt].color;
-      m.beginPath(); WG.hexPath(m, i, 1.1); m.fill();
+      m.fillRect(WG.cx[i] - W_HEX, WG.cy[i] - W_HEX, W_HEX * 2, W_HEX * 2);
     }
   }
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -318,42 +363,4 @@ function selectedEntity() {
   const s = UI.selEntity;
   if (!s) return null;
   return (s.kind === 'division' ? S.divisions : s.kind === 'scout' ? S.scouts : S.fleets).find((e) => e.id === s.id) || null;
-}
-function drawTerritoryBuilding(g, i, b, t) {
-  const x = WG.cx[i], y = WG.cy[i] + 4, lv = b.level;
-  if (b.level === 0 || b.build > 0) {
-    g.strokeStyle = '#c39a62'; g.lineWidth = 1.5; g.beginPath();
-    for (const dx of [-8, 0, 8]) { g.moveTo(x + dx, y + 6); g.lineTo(x + dx, y - 10); }
-    g.moveTo(x - 10, y - 4); g.lineTo(x + 10, y - 4); g.stroke();
-    g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(x - 12, y - 16, 24, 4); g.fillStyle = '#f2c14e'; g.fillRect(x - 12, y - 16, 24 * (1 - b.build / b.total), 4);
-    if (b.level === 0) return;
-  }
-  switch (b.type) {
-    case 'farmstead':
-      for (let r = 0; r < 3; r++) { g.fillStyle = r % 2 ? '#c9b24a' : '#8fbf4a'; g.fillRect(x - 13, y - 6 + r * 4, 16, 3); }
-      g.fillStyle = '#b5452f'; g.fillRect(x + 5, y - 6, 8, 7); g.fillStyle = '#6d3a2a'; g.beginPath(); g.moveTo(x + 4, y - 6); g.lineTo(x + 9, y - 11); g.lineTo(x + 14, y - 6); g.fill(); break;
-    case 'lumbercamp':
-      g.fillStyle = '#8b5a2b'; for (let k = 0; k < 3; k++) g.fillRect(x - 12, y - 2 + k * 3, 12, 2.5);
-      g.fillStyle = '#a0703f'; g.fillRect(x + 1, y - 7, 11, 8); g.fillStyle = '#6d3a2a'; g.beginPath(); g.moveTo(x, y - 7); g.lineTo(x + 6.5, y - 12); g.lineTo(x + 13, y - 7); g.fill(); break;
-    case 'mine':
-      g.fillStyle = '#7d756a'; g.beginPath(); g.ellipse(x, y, 13, 10, 0, Math.PI, 0); g.fill();
-      g.fillStyle = '#17120e'; g.beginPath(); g.ellipse(x, y, 5, 7, 0, Math.PI, 0); g.fill();
-      g.fillStyle = '#7a5a36'; g.fillRect(x - 6, y - 8, 12, 2); break;
-    case 'village':
-      for (const [dx, dy, c] of [[-8, 0, '#b5452f'], [4, -3, '#3f6fb5'], [-1, 5, '#8a3322']]) { g.fillStyle = '#d8c7a4'; g.fillRect(x + dx - 4, y + dy - 4, 8, 6); g.fillStyle = c; g.beginPath(); g.moveTo(x + dx - 5, y + dy - 4); g.lineTo(x + dx, y + dy - 9); g.lineTo(x + dx + 5, y + dy - 4); g.fill(); }
-      break;
-    case 'watchtower':
-      g.fillStyle = '#8f949d'; g.fillRect(x - 4, y - 18, 8, 22); g.fillStyle = '#b8bcc4'; g.fillRect(x - 6, y - 21, 12, 4);
-      g.fillStyle = '#f2c14e'; g.fillRect(x - 0.5, y - 29, 1.5, 8); g.fillRect(x + 1, y - 29, 6, 3.5); break;
-    case 'fortress':
-      g.fillStyle = '#9ca1ab'; g.fillRect(x - 13, y - 9, 26, 14);
-      g.fillStyle = '#b8bcc4'; for (let k = 0; k < 5; k++) g.fillRect(x - 13 + k * 6, y - 12, 3.5, 3);
-      g.fillRect(x - 15, y - 16, 7, 21); g.fillRect(x + 8, y - 16, 7, 21);
-      g.fillStyle = '#4a3522'; g.fillRect(x - 3, y - 2, 6, 7);
-      g.fillStyle = '#f2c14e'; g.fillRect(x - 12, y - 24, 1.5, 8); g.fillRect(x - 10.5, y - 24, 6, 3.5); break;
-    case 'dock':
-      g.fillStyle = '#7b5230'; g.fillRect(x - 12, y - 2, 24, 6); g.fillStyle = '#a0703f'; for (let k = 0; k < 5; k++) g.fillRect(x - 11 + k * 5, y - 2, 3.5, 6);
-      g.fillStyle = '#5b3d22'; g.fillRect(x - 10, y + 4, 2, 4); g.fillRect(x + 8, y + 4, 2, 4); break;
-  }
-  if (lv > 1) { g.fillStyle = '#f2c14e'; g.font = 'bold 8px sans-serif'; g.fillText('★'.repeat(lv - 1), x + 8, y + 10); }
 }

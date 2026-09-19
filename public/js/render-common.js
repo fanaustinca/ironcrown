@@ -38,7 +38,7 @@ class Camera {
   }
   key() { return `${this.x.toFixed(1)},${this.y.toFixed(1)},${this.z.toFixed(3)},${CW},${CH}`; }
 }
-const CAM = new Camera(WG, 0.3, 9);   // one camera for the one map
+const CAM = new Camera(WG, 0.25, 10);   // one camera for the one map
 
 function resize() {
   const r = cv.getBoundingClientRect();
@@ -197,12 +197,12 @@ function drawBuilding(g, b, px, py, s, t, ghost) {
     }
     case 'wall': {
       const i = b.hex, h = s * 0.3, c1 = b.level >= 4 ? '#c0c4cc' : b.level >= 2 ? '#a9adb6' : '#9aa0a8', c2 = shade(c1, -0.28);
-      const cx = KG.cx[i], cy = KG.cy[i];
+      const cx = px + s / 2, cy = py + s * 0.62;
       g.lineCap = 'butt';
       for (let d = 0; d < 6; d++) {
-        const n = KG.nb[i * 6 + d];
+        const n = WG.nb[i * 6 + d];
         if (n < 0 || !(b.wallSet ? b.wallSet.has(n) : (S.buildings.find((x) => x.hex === n) || {}).type === 'wall')) continue;
-        const mx = (cx + KG.cx[n]) / 2, my = (cy + KG.cy[n]) / 2;
+        const ang = (Math.PI / 3) * d, mx = cx + Math.cos(ang) * K_HEX * SQ3 / 2, my = cy + Math.sin(ang) * K_HEX * SQ3 / 2;
         g.strokeStyle = c2; g.lineWidth = s * 0.26; g.beginPath(); g.moveTo(cx, cy + s * 0.05); g.lineTo(mx, my + s * 0.05); g.stroke();
         g.strokeStyle = c1; g.lineWidth = s * 0.26; g.beginPath(); g.moveTo(cx, cy - h * 0.7); g.lineTo(mx, my - h * 0.7); g.stroke();
       }
@@ -330,7 +330,7 @@ function drawBuilding(g, b, px, py, s, t, ghost) {
   if (!ghost && b.build > 0) drawScaffold(g, b, px, py, s, true);
 }
 function waterDir(i) {
-  for (let d = 0; d < 6; d++) { const n = KG.nb[i * 6 + d]; if (n >= 0 && KT[n] === 0) return Math.atan2(KG.cy[n] - KG.cy[i], KG.cx[n] - KG.cx[i]); }
+  for (let d = 0; d < 6; d++) { const n = WG.nb[i * 6 + d]; if (n >= 0 && S.world.terrain[n] === T.WATER) return (Math.PI / 3) * d; }
   return 0;
 }
 function drawScaffold(g, b, px, py, s, overlay) {
@@ -346,36 +346,36 @@ function drawScaffold(g, b, px, py, s, overlay) {
   const p = 1 - b.build / b.buildTotal;
   g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(px + 3, py - 2, s - 6, 7);
   g.fillStyle = '#f2c14e'; g.fillRect(px + 4, py - 1, (s - 8) * p, 5);
-  if (SETTINGS.particles && Math.random() < 0.08) UI.fx.push({ kind: 'spark', x: px + Math.random() * s, y: py + s * 0.3, vx: rand(-30, 30), vy: rand(-60, -15), life: 0.5, max: 0.5, color: '#ffd27a' });
 }
 
-/* ---------- particles (kingdom-map world coordinates) ---------- */
+/* ---------- particles (map coordinates; sizes follow the hex scale) ---------- */
 function spawnDust(i) {
-  if (!SETTINGS.particles) return;
-  for (let k = 0; k < 18; k++) UI.fx.push({ kind: 'dust', x: KG.cx[i] + rand(-18, 18), y: KG.cy[i] + rand(0, 14), vx: rand(-25, 25), vy: rand(-35, -8), life: 0.9, max: 0.9, r: rand(2, 5) });
+  if (!SETTINGS.particles || i == null || i < 0) return;
+  for (let k = 0; k < 14; k++) UI.fx.push({ kind: 'dust', x: WG.cx[i] + rand(-6, 6), y: WG.cy[i] + rand(0, 5), vx: rand(-8, 8), vy: rand(-12, -3), life: 0.9, max: 0.9, r: rand(0.7, 1.7) });
 }
 function spawnSparkles(i) {
-  if (!SETTINGS.particles) return;
-  for (let k = 0; k < 26; k++) UI.fx.push({ kind: 'spark', x: KG.cx[i], y: KG.cy[i] - 10, vx: rand(-80, 80), vy: rand(-110, -20), life: 1.1, max: 1.1, color: pick(['#f2c14e', '#fff3c4', '#ffffff']) });
+  if (!SETTINGS.particles || i == null || i < 0) return;
+  for (let k = 0; k < 22; k++) UI.fx.push({ kind: 'spark', x: WG.cx[i], y: WG.cy[i] - 3, vx: rand(-26, 26), vy: rand(-36, -7), life: 1.1, max: 1.1, color: pick(['#f2c14e', '#fff3c4', '#ffffff']) });
 }
 function floatText(x, y, text, color) { if (SETTINGS.prodNumbers) UI.fx.push({ kind: 'text', x, y, text, color, life: 1.6, max: 1.6 }); }
-function celebrate() { if (!SETTINGS.particles) return; for (let k = 0; k < 80; k++) UI.fx.push({ kind: 'spark', x: KG.cx[HALL_HEX], y: KG.cy[HALL_HEX] - 20, vx: rand(-200, 200), vy: rand(-240, -30), life: 1.8, max: 1.8, color: pick(['#f2c14e', '#e5534b', '#4ea1f2', '#57c26b', '#fff']) }); }
+function celebrate() { if (!SETTINGS.particles) return; const i = S.world.capital; for (let k = 0; k < 70; k++) UI.fx.push({ kind: 'spark', x: WG.cx[i], y: WG.cy[i] - 6, vx: rand(-70, 70), vy: rand(-80, -10), life: 1.8, max: 1.8, color: pick(['#f2c14e', '#e5534b', '#4ea1f2', '#57c26b', '#fff']) }); }
 let shakeAmt = 0;
 function shake(n) { shakeAmt = Math.max(shakeAmt, n); }
 function drawFx(g, dt) {
+  const z = CAM.z, px = 1 / z;   // one screen pixel in map units
   for (const f of UI.fx) {
     f.life -= dt;
     const a = clamp(f.life / f.max, 0, 1);
     g.globalAlpha = a;
     if (f.kind === 'text') {
-      const y = f.y - (1 - a) * 36;
-      g.font = 'bold 12px sans-serif'; g.textAlign = 'center';
-      g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(f.text, f.x + 1, y + 1);
+      const y = f.y - (1 - a) * 30 * px;
+      g.font = `bold ${12 * px}px sans-serif`; g.textAlign = 'center';
+      g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(f.text, f.x + px, y + px);
       g.fillStyle = f.color || '#fff'; g.fillText(f.text, f.x, y); g.textAlign = 'left';
     } else {
-      f.x += f.vx * dt; f.y += f.vy * dt; f.vy += (f.kind === 'dust' ? 20 : 160) * dt;
+      f.x += f.vx * dt; f.y += f.vy * dt; f.vy += (f.kind === 'dust' ? 6 : 50) * dt;
       if (f.kind === 'dust') { g.fillStyle = '#d8cbb0'; g.beginPath(); g.arc(f.x, f.y, f.r * (1.5 - a * 0.5), 0, 7); g.fill(); }
-      else { g.fillStyle = f.color; g.fillRect(f.x - 1.5, f.y - 1.5, 3, 3); }
+      else { const r = Math.max(0.5, 1.2 * px * 2); g.fillStyle = f.color; g.fillRect(f.x - r, f.y - r, r * 2, r * 2); }
     }
     g.globalAlpha = 1;
   }

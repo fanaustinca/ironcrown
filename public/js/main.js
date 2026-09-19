@@ -21,8 +21,7 @@ function frameInner(now) {
   inputFrame(dt);
   const t = now / 1000;
   drawWorld(ctx, t, dt);
-  const inCity = cityAlpha() > 0.5;
-  document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', (b.dataset.view === 'kingdom') === inCity));
+
   hudTimer -= dt; panelTimer -= dt; saveTimer -= dt;
   if (hudTimer <= 0) { updateHud(); renderBattleHud(); hudTimer = 0.15; }
   if (panelTimer <= 0 || (UI.panelDirty && panelTimer < 0.75)) { renderPanel(); panelTimer = 1; }
@@ -60,26 +59,27 @@ async function boot() {
 window.ironcrown = {
   get state() { return S; }, UI, SETTINGS, CAM, Battles, BUILDINGS, UNITS, SHIPS, GENERALS, RESEARCH, version: GAME_VERSION,
   api: { placeBuilding, upgradeBuilding, trainUnits, buildShips, openBox, claimTile, createAlliance, joinAlliance, donate, useItem,
-    createDivision, createFleet, giveOrder, setDivisionTroops, splitDivision, mergeDivisions, startResearch, assignGeneral, save, load, selectEntity, dispatchScouts, buildTerritory, hireGeneral, launchRaid, promoteGeneral },
+    createDivision, createFleet, giveOrder, setDivisionTroops, splitDivision, mergeDivisions, startResearch, assignGeneral, save, load, selectEntity, dispatchScouts, hireGeneral, launchRaid, promoteGeneral },
   debug: {
     fastForward(sec) { let t = sec; while (t > 0) { const d = Math.min(1, t); step(d, true); t -= d; } UI.panelDirty = true; renderPanel(true); updateHud(); },
     give(res) { for (const [k, v] of Object.entries(res)) S.res[k] += v; UI.panelDirty = true; updateHud(); },
     hexToClient(view, i) {
       const r = cv.getBoundingClientRect();
-      const [wx, wy] = view === 'world' ? [WG.cx[i], WG.cy[i]] : k2w(KG.cx[i], KG.cy[i]);
+      const [wx, wy] = [WG.cx[i], WG.cy[i]];
       const [x, y] = CAM.toScreen(wx, wy);
       return { x: r.left + x, y: r.top + y };
     },
     focus(view, i) {
       if (view === 'world') { CAM.z = 1.3; CAM.centerOn(i); CAM.clamp(); }
-      else { const [wx, wy] = k2w(KG.cx[i], KG.cy[i]); CAM.z = Math.max(CAM.z, 5.5); CAM.x = wx; CAM.y = wy; CAM.clamp(); }
+      else { CAM.z = Math.max(CAM.z, 5); CAM.x = WG.cx[i]; CAM.y = WG.cy[i]; CAM.clamp(); }
     },
     freeHex(type) {
-      const cand = KG.within(HALL_HEX, landRadius()).filter((i) => !placementError(type, i)).sort((a, b) => KG.dist(a, HALL_HEX) - KG.dist(b, HALL_HEX));
+      const cap = S.world.capital;
+      const cand = WG.within(cap, landRadius() + 2).filter((i) => !placementError(type, i)).sort((a, b) => WG.dist(a, cap) - WG.dist(b, cap));
       return cand.length ? cand[0] : -1;
     },
     revealAll() { S.world.seen.fill(1); fogDirty = true; UI.panelDirty = true; },
-    rates, totalPower, hallLevel, kingdomTiles, playerTiles, territoryBonus, WG, KG, HALL_HEX,
+    rates, totalPower, hallLevel, kingdomTiles, playerTiles, territoryBonus, WG,
   },
 };
 
@@ -101,7 +101,7 @@ const cheats = {
   gold(n = 1e5) { S.res.gold += n; return done(`+${n} gold`); },
   res(n = 1e5) { for (const k of RES) S.res[k] += k === 'diamonds' ? Math.min(n, 5000) : n; return done('resources added'); },
   max() { for (const k of RES) S.res[k] = Math.max(S.res[k], capOf(k)); return done('storage filled'); },
-  hall(lvl = MAX_HALL) { S.buildings.find((b) => b.type === 'hall').level = clamp(lvl, 1, MAX_HALL); return done(`Main Hall → ${lvl}`); },
+  hall(lvl = 10) { S.buildings.find((b) => b.type === 'hall').level = Math.max(1, Math.floor(lvl)); claimRing(); return done(`Main Hall → ${lvl}`); },
   build() { S.buildings.filter((b) => b.build > 0).forEach(completeBuilding); return done('construction finished'); },
   research() { S.buildings.filter((b) => b.research).forEach(completeResearch); return done('research finished'); },
   researchAll() { for (const [id, r] of Object.entries(RESEARCH)) S.research[id] = r.max; return done('all technology researched'); },

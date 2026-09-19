@@ -1,4 +1,4 @@
-# 👑 Ironcrown `v2.2.0`
+# 👑 Ironcrown `v3.0.0`
 
 A browser kingdom-strategy game and living world simulation. Build a kingdom on a hex map, research technologies at
 universities, raise armies and navies, group them into divisions and fleets, explore ruins, caves, forts and
@@ -13,8 +13,8 @@ It's pure HTML5 Canvas + vanilla JavaScript with no build step and no dependenci
 
 | Area | What's in it |
 |---|---|
-| **One map** | The city is drawn to scale on the world map at the capital: zoom in to build, zoom out to rule the continent. Enemy capitals are procedural cities (keep, buildings, walls, towers), and AI land shows farms, mines and villages. Every army, guard, fleet and battle is on the same map. |
-| **Hex kingdom** | A hexagonal land that grows one ring per Main Hall level (6 levels). The coastline has curves, beaches, foam and shallow-water bands. You can clear trees and rocks, paint walls by dragging, and build 18 building types. |
+| **One map, small hexes** | The whole world is a single grid of about 16,500 small hexes. Land, sea, your city, enemy cities, armies and battles all share it, so there's no scale jump when zooming. You can build on any hex you own, and terrain boosts production (mills in forests, mines on hills, farms on plains). Enemy capitals are procedural cities (keep, buildings, walls, towers), and AI land shows farms, mines and villages. Every army, guard, fleet and battle is on the same map. |
+| **Hex kingdom** | A **Main Hall with no maximum level**; each level claims another ring of land and scales limits, builders and divisions. The coastline has curves, beaches, foam and shallow-water bands. You can clear trees and rocks, paint walls by dragging, and build 18 building types. |
 | **Economy** | Gold, Iron, Diamonds, Lumber and Food, plus storage caps and Warehouses. Upkeep is food for troops and gold for ships. Four seasons affect harvests and marching. There's a Port market, and offline progress runs for up to 8 hours. |
 | **Research** | Universities run one project each: 26 technologies in 4 trees, each with up to 3 levels. They include faster ships, faster horses, better armour, siege engineering, cartography, banking and engineering. |
 | **Army & divisions** | Archers, Swordsmen, Pikemen, Horsemen and Catapults, with counter bonuses. There's no army cap, only upkeep. You group troops into named divisions, each led by its own general, which you can resize, split or merge, and march them on the map to assault capitals, invade hexes, explore ruins and caves, capture forts and intercept raiders. Idle divisions guard their hex and its neighbours. |
@@ -50,7 +50,7 @@ public/                 ← the game; GitHub Pages serves this folder
     battle.js           on-map land & naval battles: formations, stances, targets
     render-common.js    camera, organic coastlines, building art, particles
     gfx.js              graphics quality: procedural textures, hill-shading, low-poly mode
-    render-kingdom.js   cities on the world map (yours + procedural AI cities)
+    render-city.js      buildings on the map (yours + procedural AI cities), villagers, effects
     render-world.js     world map, fog of war, minimap
     help.js             in-game help guide
     ui-panels.js        HUD & side-panel tabs

@@ -149,8 +149,8 @@ function renderObstacle(i) {
 }
 function renderBuildList() {
   const hall = S.buildings.find((b) => b.type === 'hall');
-  let h = `<h2>Build</h2><p class="muted small">Your city lives on the world map at your capital — zoom in (🏰 City) to see it. Pick a structure, then click a free hex inside your golden border. Click trees/rocks to clear them.</p>
-    <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · storage ${fmt(capOf('gold'))} · ${builderCount()} builders</div></div>
+  let h = `<h2>Build</h2><p class="muted small">Build on <b>any hex you own</b>. Pick a structure, then click a hex of your land, or click an empty hex of your land and choose from <b>Build here</b>. Terrain matters: mills in forests, mines on hills, farms on plains.</p>
+    <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · ${playerTiles()}/${territoryLimit()} hexes · ${builderCount()} builders</div></div>
     <span class="spacer"></span>${btn('Open', 'select', hall.id, { cls: 'sm ghost' })}</div>
     ${hall.build > 0 ? `<div style="margin-top:8px">${progress(1 - hall.build / hall.buildTotal)}<div class="small muted">Upgrading… ${fmtTime(hall.build)}</div></div>` : ''}</div>`;
   for (const cat of ['resource', 'defense', 'military', 'naval', 'civic']) {
@@ -174,7 +174,7 @@ function hallUnlocks(level) {
 }
 function renderBuildingInfo(b) {
   const d = BUILDINGS[b.type], prod = productionOf(b);
-  let h = `<div class="row"><span class="big-ico">${d.icon}</span><div><h2>${d.name}</h2><div class="muted small">Level ${b.level} / ${b.type === 'hall' ? MAX_HALL : hallLevel()}</div></div>
+  let h = `<div class="row"><span class="big-ico">${d.icon}</span><div><h2>${d.name}</h2><div class="muted small">Level ${b.level}${b.type === 'hall' ? ' · no maximum' : ' / ' + hallLevel()} · ${TERRAIN[S.world.terrain[b.hex]].name} ${hexName(b.hex)}${terrainBoost(b) > 1 ? ` · terrain ×${terrainBoost(b)}` : ''}</div></div>
     <span class="spacer"></span><button class="icon-btn" data-action="deselect" title="Close">✕</button></div><p class="small muted">${esc(d.desc)}</p>`;
   if (b.build > 0) h += `<div class="card">${progress(1 - b.build / b.buildTotal)}<div class="small" style="margin-top:4px">${b.level === 0 ? 'Constructing' : 'Upgrading to level ' + (b.level + 1)}… <b>${fmtTime(b.build)}</b></div>
     ${S.items.hammer ? `<div style="margin-top:6px">${btn(`🔨 Builder's Hammer (${S.items.hammer})`, 'use-item', 'hammer', { cls: 'sm ghost' })}</div>` : ''}</div>`;
@@ -186,13 +186,13 @@ function renderBuildingInfo(b) {
   if (d.builds) h += `<dt>Ship tier</dt><dd>${SHIP_TYPES.filter((t) => SHIPS[t].lvl <= b.level).map((t) => SHIPS[t].icon).join(' ')}</dd>`;
   if (b.type === 'hall') h += `<dt>Storage cap</dt><dd>${fmt(capOf('gold'))} (💎${capOf('diamonds')})</dd><dt>Territory limit</dt><dd>${territoryLimit()} hexes</dd><dt>Divisions</dt><dd>${divisionLimit()}</dd>`;
   h += '</dl>';
-  if (!(b.type === 'hall' && b.level >= MAX_HALL)) {
+  {
     const err = upgradeError(b);
     h += `<h3>Upgrade to level ${b.level + 1}</h3><div class="card"><div class="row wrap">${costHtml(costFor(b.type, b.level + 1), S.res)}<span class="small muted">⏱ ${fmtTime(buildTime(b.type, b.level + 1))}</span></div>
-      ${b.type === 'hall' ? `<div class="small muted" style="margin-top:6px">Unlocks: ${hallUnlocks(b.level + 1).join(' · ') || 'bigger land'}; land radius ${landRadius()}→${landRadius() + 1}; more storage & builders.</div>` : ''}
+      ${b.type === 'hall' ? `<div class="small muted" style="margin-top:6px">Unlocks: ${hallUnlocks(b.level + 1).join(' · ') || 'more of every building'}; claims the land ring ${landRadius()}→${landRadius() + 1}; more storage, territory${(b.level + 1) % 2 ? ' & a builder' : ''}.</div>` : ''}
       <div style="margin-top:8px">${btn('⬆ Upgrade', 'upgrade', b.id, { disabled: !!err, title: err || '', cls: 'block' })}</div>
       ${err ? `<div class="small muted" style="margin-top:4px">${esc(err)}</div>` : ''}</div>`;
-  } else h += '<p class="muted">Maximum level reached. Long live the crown!</p>';
+  }
   if (d.trains) { h += '<h3>Training</h3>'; for (const u of d.trains) h += unitRow(u); }
   if (d.builds) { h += '<h3>Shipbuilding</h3>'; for (const t of SHIP_TYPES) h += shipRow(t); }
   if (d.research) h += `<h3>Research</h3>` + uniCard(b) + `<p class="small">${btn('🎓 Open research tree', 'tab', 'research', { cls: 'sm ghost' })}</p>`;
@@ -528,23 +528,20 @@ function renderLog() {
 }
 
 function territoryCard(i) {
-  const cap = i === S.world.capital, def = hexDefense(i), b = tbAt(i);
-  let h = `<div class="card"><b>🏳️ Your territory${cap ? ' — the capital' : ''}</b>
-    <div class="small">Defense: ${def > 0 ? `🛡️ ${fmt(def)}` : '<span class="bad-txt">undefended — raiders love this</span>'}${stationedAt(i).length ? ` · guarded by ${stationedAt(i).map((d) => esc(d.name)).join(', ')}` : ''}</div>`;
-  if (cap) return h + '<div class="small muted">Build in the capital from the 🏰 Kingdom view.</div></div>';
-  if (b) {
-    const d = TERRITORY_BUILDINGS[b.type], tp = tbProduction(i), err = tbError(b.type, i, true);
-    h += `<h3>${d.icon} ${d.name} · level ${b.level}/${TB_MAX}</h3>`;
-    if (b.build > 0) h += `${progress(1 - b.build / b.total)}<div class="small muted">${b.level ? 'Upgrading' : 'Building'}… ${fmtTime(b.build)}</div>`;
-    h += `<div class="small">${d.desc}${tp ? ' · ' + Object.entries(tp).map(([k, v]) => `${RES_META[k].icon}+${(v * 60).toFixed(k === 'diamonds' ? 1 : 0)}/min`).join(' ') : ''}${d.def ? ` · 🛡️ ${d.def * Math.max(1, b.level)}` : ''}</div>`;
-    if (b.level < TB_MAX) h += `<div class="row" style="margin-top:6px">${costHtml(tbCost(b.type, b.level + 1), S.res)}<span class="spacer"></span>${btn('⬆ Upgrade', 'tb-build', `${b.type}:${i}`, { cls: 'sm', disabled: !!err, title: err || '' })}</div>`;
-    return h + '</div>';
-  }
+  const cap = i === S.world.capital || isPlaza(i), def = hexDefense(i), b = buildingAt(i), o = obstacleAt(i);
+  let h = `<div class="card"><b>🏳️ Your land${cap ? ' — the capital' : ''}</b>
+    <div class="small">Defense here: ${def > 0 ? `🛡️ ${fmt(def)}` : '<span class="bad-txt">undefended — raiders love this</span>'}${stationedAt(i).length ? ` · guarded by ${stationedAt(i).map((d) => esc(d.name)).join(', ')}` : ''}</div>`;
+  if (b) return h + `<div class="row" style="margin-top:6px">${BUILDINGS[b.type].icon} <b>${BUILDINGS[b.type].name}</b> · level ${b.level}<span class="spacer"></span>${btn('Open', 'select', b.id, { cls: 'sm' })}</div></div>`;
+  if (cap) return h + '</div>';
+  if (o) h += `<div class="row small" style="margin-top:6px">${o === 'tree' ? '🌲 Trees' : '🪨 Rocks'} cover this hex.<span class="spacer"></span>${btn('🪓 Clear 🪙25', 'clear-obstacle', i, { cls: 'sm ghost' })}</div>`;
   h += '<h3>Build here</h3><div class="tb-grid">';
-  for (const [k, d] of Object.entries(TERRITORY_BUILDINGS)) {
-    if (!tbAllowed(k, i)) continue;
-    const err = tbError(k, i);
-    h += `<button class="build-item ${err ? 'locked' : ''}" data-action="tb-build" data-arg="${k}:${i}" data-tb="${k}" ${err ? `title="${esc(err)}"` : ''}><div class="bi-top"><span class="bi-ico">${d.icon}</span><b>${d.name}</b></div><div>${costHtml(d.cost, S.res)}</div><div class="desc">${esc(d.desc)}</div></button>`;
+  let any = false;
+  for (const t of BUILD_ORDER) {
+    const err = placementError(t, i), lock = buildLockReason(t);
+    if (err && !err.startsWith('Clear')) continue;
+    any = true;
+    const boost = terrainBoost({ type: t, hex: i });
+    h += `<button class="build-item ${err || lock ? 'locked' : ''}" data-action="build-at" data-arg="${t}:${i}" data-tb="${t}" title="${esc(err || lock || '')}"><div class="bi-top"><span class="bi-ico">${BUILDINGS[t].icon}</span><b>${BUILDINGS[t].name}</b>${boost > 1 ? `<span class="count" style="color:var(--green)">×${boost}</span>` : ''}</div><div>${costHtml(costFor(t, 1), S.res)}</div><div class="desc">${esc(lock || err || BUILDINGS[t].desc)}</div></button>`;
   }
-  return h + '</div></div>';
+  return h + (any ? '' : '<p class="small muted">Nothing can be built on this terrain.</p>') + '</div></div>';
 }

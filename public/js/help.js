@@ -8,21 +8,21 @@ const HELP = [
     <p>You rule a small kingdom in a world of rival realms, pirates and forgotten ruins. The game runs in real time, and your economy keeps working while you're away (up to 8 hours).</p>
     <ol>
       <li><b>Build economy first.</b> Open the <b>🏗️ Build</b> tab, pick a Gold Mine, Lumber Mill or Farm, and click a free hex inside your golden border.</li>
-      <li><b>Upgrade the Main Hall</b> (click the castle). Each level grows your hexagonal land by one ring and unlocks new buildings, including Ports, Shipyards, Universities and Stables at level 2.</li>
+      <li><b>Upgrade the Main Hall</b> (click the castle). It has <b>no maximum level</b>. Each level claims another ring of land around your capital, adds storage, builders and divisions, and raises every building's level cap and count limits. Ports, Shipyards, Universities and Stables unlock at level 2.</li>
       <li><b>Train troops</b> in the <b>⚔️ Army</b> tab and group them into <b>divisions</b>.</li>
       <li>Switch to the <b>🗺️ World</b> view (top-left, or press <kbd>M</kbd>) to explore, claim land, fight and trade.</li>
       <li>Build a <b>University</b> and start <b>🎓 Research</b> early, because it multiplies everything.</li>
     </ol>
     <p class="tip">Tip: hover over anything for a tooltip. The top bar shows every resource with its storage cap and income per minute. Hover a resource for a full breakdown.</p>` },
   { id: 'camera', icon: '🎥', title: 'One map, camera & controls', html: `
-    <p><b>There is only one map.</b> Your city is drawn to scale on the world map at your capital, and it grows with each Main Hall level. <b>Zoom in</b> (scroll, pinch, or 🏰 City) to build and manage it. <b>Zoom out</b> (🗺️ World) to see the continent: every kingdom's cities and territory buildings, and every army, guard, fleet and battle. Enemy capitals are real cities too: zoom in on one to see its keep, buildings, walls and towers.</p>
+    <p><b>There is only one map, made of small hexes.</b> Land, sea, your city, enemy cities, armies and battles all share the same hex grid. <b>Zoom in</b> (scroll or pinch) to build and manage your city. <b>Zoom out</b> to see the continent: every kingdom's cities and territory, and every army, guard, fleet and battle. Enemy capitals are real cities too: zoom in on one to see its keep, buildings, walls and towers.</p>
     <table class="keys">
       <tr><td>Drag with mouse or finger</td><td>Move the map (default)</td></tr>
       <tr><td>Scroll wheel / pinch</td><td>Zoom in & out</td></tr>
       <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</td><td>Move the map (enable in Settings → Camera)</td></tr>
       <tr><td><kbd>+</kbd> <kbd>−</kbd> / zoom buttons</td><td>Zoom</td></tr>
       <tr><td><kbd>Space</kbd> / ⌖ button</td><td>Recenter on your capital</td></tr>
-      <tr><td><kbd>K</kbd> / <kbd>M</kbd></td><td>Fly into your city / zoom out to the world</td></tr>
+      <tr><td><kbd>K</kbd> / <kbd>M</kbd> / 🏠</td><td>Fly to your capital / zoom out to the whole world</td></tr>
       <tr><td>Left-click</td><td>Select a building, hex, division or fleet</td></tr>
       <tr><td>Right-click (World)</td><td>Give the selected division/fleet the default order for that hex</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>Cancel placement / deselect / close dialogs</td></tr>
@@ -32,7 +32,7 @@ const HELP = [
     <p>⚙️ Settings → <b>Graphics quality</b> switches instantly between <b>✨ High</b>, <b>🎨 Classic</b> and <b>🔷 Low-poly</b>. High has realistic procedural textures (grass blades, meadow flowers, forest litter, rock, sand ripples, snow), hill-shading, animated water with sun glints, and drifting cloud shadows. Classic uses flat colours. Low-poly draws every hex as flat-shaded facets and is the fastest option on weak devices.</p>
     <p>Open <b>⚙️ Settings</b> in the top bar to choose how the camera moves: <b>Drag</b>, <b>Keyboard</b> or <b>Both</b>. You can also invert dragging, turn on edge scrolling, change the zoom speed and toggle the minimap. On the World map, click or drag the <b>minimap</b> in the corner to jump anywhere.</p>` },
   { id: 'kingdom', icon: '🏰', title: 'Kingdom & buildings', html: `
-    <p>Your kingdom is a hex map around the <b>Main Hall</b>. The glowing golden hexagon is your land, and the faint dashed ring shows where the next Hall level will expand it. The sea lies to the east, and coastal buildings (Port, Shipyard) must touch it.</p>
+    <p>Your kingdom is the land you own on the map (gold border), centred on the <b>Main Hall</b> and its cobbled plaza. Coastal buildings (Port, Shipyard) must touch the sea.</p>
     <ul>
       <li><b>Placing:</b> Build tab → choose → click a hex. Green is valid, red explains why not. Walls can be <b>painted by dragging</b>.</li>
       <li><b>Trees & rocks</b> block some hexes. Click them and pay 🪙25 to clear them, which gives lumber or iron.</li>
@@ -103,9 +103,13 @@ const HELP = [
     <h4>Territory</h4>
     <p>Your borders are hexagonal and gold. Click any explored neutral hex → <b>Claim</b>. It works <b>anywhere</b>, and the further it is from your borders the more it costs. <b>Beware:</b> raiders target your <b>undefended</b> hexes, meaning no stationed division and no watchtower or fortress. Undefended land can be pillaged, burned or annexed. The territory limit grows with the Main Hall and Administration.</p>` },
   { id: 'territory', icon: '🏘️', title: 'Building on your land', html: `
-    <p>Every hex you own outside the capital can hold <b>one building</b> (levels 1–3). Click the hex on the World map → <b>Build here</b>:</p>
-    <table class="keys"><tr><th>Building</th><th>Does</th></tr>${Object.values(TERRITORY_BUILDINGS).map((b) => `<tr><td>${b.icon} ${b.name}</td><td>${b.desc}</td></tr>`).join('')}</table>
-    <p>Buildings are lost if the hex is taken. Watchtowers and Fortresses make a hex <b>defended</b>, and their towers fight in any raid on it.</p>` },
+    <p>The whole world is one map of small hexes. <b>You can build on any hex you own</b>, not just around the Main Hall. Click an empty hex of your land and pick from <b>Build here</b>, or choose a building in the 🏗️ Build tab and click a hex.</p>
+    <ul>
+      <li><b>Terrain matters:</b> Lumber Mills produce more in forests, Gold and Iron Mines on hills (and a lot more on a gold vein), Diamond Mines on a gem cave, and Farms on plains or meadows.</li>
+      <li>Forests have trees and hills have rocks. Clear them (🪙25, which pays back in lumber or iron) before building, unless the building uses them: lumber mills go straight into forests and mines onto rocky hills.</li>
+      <li>Towers, Cannons, Spires and <b>Fortresses</b> defend every battle within 3 hexes of them, so use them to guard far-off land. Towers also watch the land around them.</li>
+      <li>Ports and Shipyards need a coastal hex. Fleets can dock at any of your ports.</li>
+    </ul>` },
   { id: 'combat', icon: '🛡️', title: 'Combat, raids & defense', html: `
     <ul>
       <li><b>Battles happen right on the map</b> where the armies meet, with no separate screen. The camera jumps there (optional) and a <b>command bar</b> appears at the bottom.</li>

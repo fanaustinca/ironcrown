@@ -109,13 +109,13 @@ function showBoxOpening(box, reward) {
 }
 
 /* ---------- view / tab ---------- */
-// One map: "views" are just camera flights — into your city, or out to the world.
+// One map: K flies to your capital, M zooms out over the world.
 function setView(v) {
-  if (v === 'kingdom') { CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.z = Math.max(CAM.z, 5.5); CAM.clamp(); setTab('info'); }
-  else { CAM.z = Math.min(CAM.z, 1.1); CAM.clamp(); if (UI.tab === 'info' && !UI.selected) setTab('map'); }
-  UI.lastPanelHtml = ''; UI.panelDirty = true;
+  if (v === 'kingdom') { CAM.z = Math.max(CAM.z, 4.5); CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.clamp(); }
+  else { CAM.z = 0.6; CAM.clamp(); }
+  UI.panelDirty = true;
 }
-function flyToCity() { if (cityAlpha() < 0.95) { CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.z = Math.max(CAM.z, 5.5); CAM.clamp(); } }
+function flyToCity() { if (CAM.z < 2.5) { CAM.z = 4.5; CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.clamp(); } }
 function setTab(t) {
   UI.tab = t;
   document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
@@ -140,7 +140,8 @@ const findEnt = (arg) => { const [k, id] = arg.split(':'); return (k === 'divisi
 const ACTIONS = {
   place(t) { const l = buildLockReason(t); if (l) return toast(l, 'bad'); flyToCity(); setTab('info'); UI.placing = t; UI.selected = null; updatePlacingHint(); },
   'cancel-place'() { UI.placing = null; updatePlacingHint(); },
-  select(id) { UI.selected = +id; flyToCity(); setTab('info'); },
+  select(id) { UI.selected = +id; const b = S.buildings.find((x) => x.id === +id); if (b && CAM.z < 2.5) { CAM.z = 4.5; CAM.centerOn(b.hex); } setTab('info'); },
+  'build-at'(arg) { const [t, i] = arg.split(':'); const b = placeBuilding(t, +i); if (b) { UI.selected = b.id; setTab('info'); } },
   deselect() { UI.selected = null; UI.selHex = -1; },
   upgrade(id) { upgradeBuilding(S.buildings.find((b) => b.id === +id)); },
   demolish(id) { showModal(`<h2>Demolish?</h2><p>You will get 40% of its cost back.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Demolish', 'demolish-yes', id, { cls: 'red' })}</div>`); },
@@ -274,7 +275,6 @@ function bindInput() {
     const t = e.target.closest('[data-action]');
     if (t && !t.disabled && ACTIONS[t.dataset.action]) { ACTIONS[t.dataset.action](t.dataset.arg); UI.panelDirty = true; renderPanel(true); updateHud(); }
     const tab = e.target.closest('[data-tab]'); if (tab) setTab(tab.dataset.tab);
-    const view = e.target.closest('[data-view]'); if (view) setView(view.dataset.view);
     if (e.target === el('modal') && S.started) closeModal();
   });
   el('panel').addEventListener('pointerdown', () => { UI.pointerDown = true; });
@@ -341,7 +341,7 @@ function bindInput() {
     pointers.set(e.pointerId, p);
     if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinchDist = dist(a.x, a.y, b.x, b.y); drag = null; return; }
     drag = { x: p.x, y: p.y, sx: p.x, sy: p.y, moved: false, button: e.button, paint: UI.placing === 'wall' && e.button === 0 };
-    if (drag.paint) { const i = cityHexAt(p); if (placeBuilding('wall', i)) lastPaint = i; if (buildLockReason('wall')) { UI.placing = null; updatePlacingHint(); } }
+    if (drag.paint) { const i = hexAt(p); if (placeBuilding('wall', i)) lastPaint = i; if (buildLockReason('wall')) { UI.placing = null; updatePlacingHint(); } }
   });
   cv.addEventListener('pointermove', (e) => {
     const p = local(e);
@@ -354,10 +354,9 @@ function bindInput() {
       return;
     }
     UI.hover = hexAt(p);
-    UI.khover = cityHexAt(p);
     if (drag) {
       if (drag.paint) {
-        const i = UI.khover;
+        const i = UI.hover;
         if (i !== lastPaint && UI.placing === 'wall' && !placementError('wall', i) && !buildLockReason('wall')) { placeBuilding('wall', i); lastPaint = i; }
       } else if (dist(p.x, p.y, drag.sx, drag.sy) > 6 && (canDragPan() || e.pointerType === 'touch')) {
         drag.moved = true;
@@ -379,7 +378,7 @@ function bindInput() {
   };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); drag = null; });
-  cv.addEventListener('pointerleave', () => { mouse.inside = false; UI.hover = -1; UI.khover = -1; el('tooltip').hidden = true; });
+  cv.addEventListener('pointerleave', () => { mouse.inside = false; UI.hover = -1; el('tooltip').hidden = true; });
   cv.addEventListener('wheel', (e) => { e.preventDefault(); const p = local(e); CAM.zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015 * SETTINGS.zoomSpeed)); }, { passive: false });
   cv.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -394,49 +393,34 @@ function bindInput() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('beforeunload', save);
 }
-// Kingdom hex under the cursor while the city is visible (else -1).
-function cityHexAt(p) {
-  if (cityAlpha() < 0.3) return -1;
-  const [wx, wy] = CAM.toWorld(p.x, p.y), [kx, ky] = w2k(wx, wy), i = KG.at(kx, ky);
-  return i >= 0 && KG.dist(i, HALL_HEX) <= landRadius() + 1 ? i : -1;
-}
 function handleClick(p, button) {
-  const [wx, wy] = CAM.toWorld(p.x, p.y);
-  const k = cityHexAt(p);
+  const [wx, wy] = CAM.toWorld(p.x, p.y), i = WG.at(wx, wy);
   if (UI.placing) {
     const type = UI.placing;
-    if (k < 0) { toast('Zoom into your city and click a hex inside the golden border', 'bad'); return; }
-    if (placeBuilding(type, k) && (type !== 'wall' || buildLockReason('wall'))) { UI.placing = null; updatePlacingHint(); }
+    if (placeBuilding(type, i) && (type !== 'wall' || buildLockReason('wall'))) { UI.placing = null; updatePlacingHint(); }
     return renderPanel(true);
   }
-  const i = WG.at(wx, wy), sel = selectedEntity();
-  const hit = S.divisions.filter((d) => d.status !== 'fighting').concat(S.fleets, S.scouts).map((e) => { const [x, y] = entPos(e); const [sx, sy] = CAM.toScreen(x, y - 8); return [e, dist(sx, sy, p.x, p.y)]; }).filter(([, d]) => d < 22).sort((a, b) => a[1] - b[1])[0];
+  const sel = selectedEntity();
+  const hit = S.divisions.filter((d) => d.status !== 'fighting').concat(S.fleets, S.scouts).map((e) => { const [x, y] = entPos(e); const [sx, sy] = CAM.toScreen(x, y); return [e, dist(sx, sy, p.x, p.y - 8)]; }).filter(([, d]) => d < 20).sort((a, b) => a[1] - b[1])[0];
   const kindOf = (e) => (isScout(e) ? 'scout' : isFleet(e) ? 'fleet' : 'division');
-  // city clicks: buildings, obstacles, empty land
-  if (k >= 0 && button === 0 && !hit && !(sel && !isScout(sel) && k >= 0 && !inLand(k))) {
-    const b = buildingAt(k);
-    if (b || (obstacleAt(k) && inLand(k)) || inLand(k)) {
-      UI.selected = b ? b.id : null;
-      UI.selHex = !b && obstacleAt(k) ? k : -1;
-      setTab('info');
-      return renderPanel(true);
-    }
-  }
   if (button === 0 && sel && isScout(sel) && i >= 0 && (!hit || hit[0] === sel)) { UI.worldSel = i; if (i !== sel.at) issueOrder(sel, 'move', i); }
   else if (button === 2 && sel && i >= 0) {
     const o = ordersFor(sel, i), best = o.find(([kk]) => kk !== 'move') || o[0];
     UI.worldSel = i;
     if (best) issueOrder(sel, best[0], i); else toast('No valid order for that hex', 'bad');
-  } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; UI.worldSel = hit[0].at; setTab('map'); }
-  else if (button === 0) { UI.worldSel = i; UI.selected = null; setTab('map'); }
+  } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; UI.worldSel = hit[0].at; UI.selected = null; setTab('map'); }
+  else if (button === 0 && i >= 0) {
+    const b = S.world.owner[i] === -2 ? buildingAt(i) : null;
+    if (b && !sel) { UI.selected = b.id; UI.selHex = -1; UI.worldSel = -1; setTab('info'); }
+    else { UI.worldSel = i; UI.selected = null; setTab('map'); }
+  }
   renderPanel(true);
 }
 function updateTooltip(p) {
-  const i = UI.hover, tip = el('tooltip'), ki = UI.khover;
+  const i = UI.hover, tip = el('tooltip'), ki = i;
   let html = null;
-  if (ki >= 0 && (inLand(ki) || UI.placing)) {
+  if (ki >= 0 && (buildingAt(ki) && S.world.owner[ki] === -2 || UI.placing)) {
     const b = buildingAt(ki), o = obstacleAt(ki);
-    const i = ki;
     if (b && !UI.placing) html = `<b>${BUILDINGS[b.type].name}</b> · level ${b.level}${b.build > 0 ? `<br>🔨 ${fmtTime(b.build)}` : ''}${b.research ? `<br>🎓 ${RESEARCH[b.research.id].name}` : ''}`;
     else if (o && !UI.placing) html = `<b>${o === 'tree' ? 'Trees' : 'Rocks'}</b><br>Click to clear`;
     else if (UI.placing) { const err = placementError(UI.placing, i); html = err ? `⛔ ${esc(err)}` : `✅ Build ${BUILDINGS[UI.placing].name} here`; }

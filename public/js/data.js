@@ -5,19 +5,17 @@
    ========================================================================== */
 'use strict';
 
-const GAME_VERSION = '2.2.0';
-const SAVE_VERSION = 2;
+const GAME_VERSION = '3.0.0';
+const SAVE_VERSION = 3;
 
-// Kingdom map (hex grid, pointy-top, odd-r offset)
-const KW = 31, KH = 23, K_HEX = 34;
-const HALL_COL = 14, HALL_ROW = 11;
-// World map
-const WW = 50, WH = 36, W_HEX = 30;
-// One map: the kingdom city is drawn to scale on the world map at the capital.
-const K2W = 0.2;          // kingdom-map units → world-map units
-const CITY_Z = 1.6;       // camera zoom where city detail starts to appear
+// ONE map made of small hexes (pointy-top, odd-r offset). Cities, land, sea,
+// armies and battles all live on this single grid.
+const WW = 150, WH = 110, W_HEX = 11;
+const K_HEX = 34;               // reference size the building art is drawn at (scaled onto a map hex)
+const ART = W_HEX / K_HEX;      // art units → map units
+const HEX_BONUS = 0.12;         // resource bonus of one small land hex (terrain table is per 'big' area)
 
-const MAX_HALL = 6;
+const AI_MAX_HALL = 10;          // the player's Main Hall has no maximum
 const AI_TICK = 20;               // seconds between AI kingdom turns
 const DAY_LENGTH = 90;            // seconds per in-game day
 const OFFLINE_CAP = 8 * 3600;
@@ -53,14 +51,18 @@ const BUILDINGS = {
                  desc: 'Saws timber for buildings and ships.' },
   farm:        { name: 'Farm', icon: '🌾', cat: 'resource', produces: 'food', rate: 1.3, base: { gold: 60, lumber: 40 }, mult: 1.75, time: 4, limit: [2,3,4,5,6,6],
                  desc: 'Feeds your people and your soldiers. Harvests change with the seasons.' },
+  village:     { name: 'Village', icon: '🏘️', cat: 'resource', produces: 'gold', rate: 0.6, base: { lumber: 120, food: 60 }, mult: 1.7, time: 5, limit: [2,3,4,5,6,7],
+                 desc: 'Settlers pay taxes in gold. Build them anywhere on your land.' },
   warehouse:   { name: 'Warehouse', icon: '📦', cat: 'resource', storage: 0.2, base: { gold: 250, lumber: 300 }, mult: 1.8, time: 6, hall: 2, limit: [0,1,2,2,3,3],
                  desc: '+20% storage capacity per level.' },
   wall:        { name: 'Wall', icon: '🧱', cat: 'defense', def: 10, base: { lumber: 25, iron: 5 }, mult: 1.6, time: 1, limit: [14,24,34,44,54,64],
                  desc: 'Stone segments that link up with neighbours. Drag to paint a line of walls.' },
   tower:       { name: 'Archer Tower', icon: '🗼', cat: 'defense', def: 45, base: { gold: 150, lumber: 120 }, mult: 1.8, time: 6, limit: [1,2,3,4,5,6],
-                 desc: 'Rains arrows on raiders.' },
+                 desc: 'Rains arrows on raiders within 3 hexes and watches the land around it.', vision: 6 },
   cannon:      { name: 'Cannon', icon: '💣', cat: 'defense', def: 95, base: { gold: 400, iron: 250 }, mult: 1.8, time: 8, hall: 3, limit: [0,0,1,2,3,4],
                  desc: 'Heavy iron cannon — devastating against massed troops.' },
+  fortress:    { name: 'Fortress', icon: '🏯', cat: 'defense', def: 150, base: { gold: 600, lumber: 400, iron: 250 }, mult: 1.8, time: 12, hall: 2, limit: [0,1,2,3,4,5],
+                 desc: 'Walled stronghold. Its towers join any battle within 3 hexes — perfect for guarding far-off land.' },
   spire:       { name: 'Arcane Spire', icon: '🔮', cat: 'defense', def: 220, base: { gold: 1500, iron: 600, diamonds: 40 }, mult: 1.9, time: 12, hall: 5, limit: [0,0,0,0,1,2],
                  desc: 'Crackling crystal spire, the strongest defense in the realm.' },
   archery:     { name: 'Archery Range', icon: '🏹', cat: 'military', trains: ['archer'], base: { gold: 120, lumber: 150 }, mult: 1.8, time: 5, limit: [1,1,1,1,1,1],
@@ -80,7 +82,11 @@ const BUILDINGS = {
   university:  { name: 'University', icon: '🎓', cat: 'civic', research: true, base: { gold: 500, lumber: 400, iron: 100 }, mult: 1.9, time: 10, hall: 2, limit: [0,1,1,2,2,3],
                  desc: 'Researches technologies. Each university runs one project; higher levels unlock advanced tiers and study faster.' },
 };
-const BUILD_ORDER = ['goldmine','ironmine','diamondmine','lumbermill','farm','warehouse','wall','tower','cannon','spire','archery','barracks','stable','workshop','scoutlodge','port','shipyard','university'];
+const BUILD_ORDER = ['goldmine','ironmine','diamondmine','lumbermill','farm','village','warehouse','wall','tower','fortress','cannon','spire','archery','barracks','stable','workshop','scoutlodge','port','shipyard','university'];
+// Past Main Hall 6 the limits keep growing by this much per hall level.
+const LIMIT_GROW = { goldmine: 1, ironmine: 1, diamondmine: 0.5, lumbermill: 1, farm: 1, village: 1, warehouse: 0.5, wall: 10, tower: 1, fortress: 1, cannon: 1, spire: 0.5, port: 0.34, shipyard: 0.5, university: 0.5 };
+// Terrain that makes a building more productive when built on it.
+const TERRAIN_BOOST = { goldmine: { 4: 1.5, goldvein: 2 }, ironmine: { 4: 1.6 }, diamondmine: { gems: 2.5 }, lumbermill: { 3: 1.6 }, farm: { 1: 1.3, 2: 1.35 }, village: { 2: 1.2, 1: 1.1 } };
 const CAT_NAMES = { resource: 'Economy', defense: 'Defenses', military: 'Military', naval: 'Naval', civic: 'Learning', core: 'Kingdom' };
 
 /* ---- Land units ---- vs = damage multipliers against unit types */
@@ -223,19 +229,6 @@ const PERSONALITIES = {
 const ALLIANCE_COLORS = ['#f2c14e', '#e5534b', '#4ea1f2', '#57c26b', '#b07cf2', '#e84393'];
 const ALLIANCE_EMBLEMS = ['🦅', '🐉', '🦁', '🐺', '⚜️', '🌙'];
 const DIVISION_COLORS = ['#f2c14e', '#e8e8e8', '#ff8a5c', '#7fd4ff', '#b3f07a', '#ff9ad5'];
-
-/* ---- Buildings on captured / claimed world hexes (one per hex, levels 1-3) ----
-   on(terrain, feature, coastal) → can it be built on this hex? */
-const TERRITORY_BUILDINGS = {
-  farmstead:  { name: 'Farmstead',   icon: '🌾', cost: { gold: 150, lumber: 120 }, time: 20, prod: { food: 0.9 },   on: (t) => [T.PLAINS, T.MEADOW, T.SWAMP].includes(t), desc: 'Fields and barns. Food on plains, meadows and swamps.' },
-  lumbercamp: { name: 'Lumber Camp', icon: '🪓', cost: { gold: 150 },              time: 20, prod: { lumber: 0.8 }, on: (t) => t === T.FOREST, desc: 'Woodcutters harvest the forest.' },
-  mine:       { name: 'Mine',        icon: '⛏️', cost: { gold: 220, lumber: 180 }, time: 30, prod: { iron: 0.6 },   on: (t, f) => t === T.HILLS || (f && (f.type === 'cave' || f.type === 'goldvein')), desc: 'Iron from hills — or triples a cave\'s or gold vein\'s output.' },
-  village:    { name: 'Village',     icon: '🏘️', cost: { gold: 200, lumber: 200 }, time: 25, prod: { gold: 0.5, food: 0.2 }, on: (t) => t !== T.WATER && t !== T.MOUNTAIN, desc: 'Settlers pay taxes. Works on any land.' },
-  watchtower: { name: 'Watchtower',  icon: '🗼', cost: { gold: 180, lumber: 150 }, time: 20, def: 60, vision: 3, on: (t) => t !== T.WATER && t !== T.MOUNTAIN, desc: 'Sees far and defends the hex (counts as defended).' },
-  fortress:   { name: 'Fortress',    icon: '🏯', cost: { gold: 600, lumber: 400, iron: 250 }, time: 45, def: 220, on: (t) => t !== T.WATER && t !== T.MOUNTAIN, desc: 'Strong walls & towers that fight any raid on this hex.' },
-  dock:       { name: 'Dock',        icon: '⚓', cost: { gold: 300, lumber: 300 }, time: 30, prod: { gold: 0.4 }, coastal: true, on: (t, f, c) => c, desc: 'Coastal harbour: fleets can disband here and trade earns gold.' },
-};
-const TB_MAX = 3;
 
 /* ---- Battle formations & stances (battles are fought on the world map) ---- */
 const FORMATIONS = {

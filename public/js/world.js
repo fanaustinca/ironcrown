@@ -27,13 +27,14 @@ let worldVersion = 0;
 function generateWorld() {
   const seed = S.seed, rng = mulberry32(seed ^ 0x5eed);
   const N = WG.N, elev = new Float32Array(N), moist = new Float32Array(N), ridge = new Float32Array(N);
-  const islands = Array.from({ length: 4 }, (_, k) => ({ c: WW - 5 - rng() * 5, r: 4 + k * 8.5 + rng() * 3, s: 1.6 + rng() * 1.4 }));
+  const SX = 50 / WW, SY = 36 / WH;   // sample noise in the old 50×36 units → same continents, finer hexes
+  const islands = Array.from({ length: 4 }, (_, k) => ({ c: 50 - 5 - rng() * 5, r: 4 + k * 8.5 + rng() * 3, s: 1.6 + rng() * 1.4 }));
   for (let i = 0; i < N; i++) {
-    const c = WG.col(i), r = WG.row(i), nx = c / WW, ny = r / WH;
+    const c = WG.col(i) * SX, r = WG.row(i) * SY, nx = c / 50, ny = r / 36;
     const dx = (nx - 0.42) / 0.5, dy = (ny - 0.5) / 0.5;
     let e = fbm(c * 0.1, r * 0.12, seed, 5) * 0.8 + fbm(c * 0.035, r * 0.045, seed + 99, 3) * 0.55 - Math.sqrt(dx * dx + dy * dy) * 0.62;
     for (const is of islands) e += 0.55 * Math.exp(-((dist(c, r, is.c, is.r) / is.s) ** 2));
-    const edge = Math.min(c, r, WW - 1 - c, WH - 1 - r);
+    const edge = Math.min(c, r, 50 - 1 - c, 36 - 1 - r);
     if (edge < 2) e -= (2 - edge) * 0.25;
     elev[i] = e;
     moist[i] = fbm(c * 0.09 + 40, r * 0.1 - 13, seed + 5, 4);
@@ -49,31 +50,32 @@ function generateWorld() {
     else if ((h > 0.55 && ridge[i] > 0.74) || h > 0.86) t = T.MOUNTAIN;
     else if (h > 0.42 && ridge[i] > 0.6) t = T.HILLS;
     else if (h < 0.1 && m > 0.6) t = T.SWAMP;
-    else if (m < 0.38 && rw > WH * 0.5) t = T.DESERT;
+    else if (m < 0.38 && rw * SY > 18) t = T.DESERT;
     else if (m > 0.55) t = T.FOREST;
     else if (m > 0.47) t = T.MEADOW;
     else t = T.PLAINS;
     terrain[i] = t;
   }
-  S.world = { terrain, owner: new Array(N).fill(-1), seen: new Array(N).fill(0), feat: {}, bld: {}, capital: -1, harbor: -1 };
+  S.world = { terrain, owner: new Array(N).fill(-1), seen: new Array(N).fill(0), feat: {}, capital: -1, harbor: -1 };
   deriveWorld();
 
   // --- Player capital: coastal, roomy, western half ---
   let best = -1, bestScore = -1e9;
   for (let i = 0; i < N; i++) {
     const c = WG.col(i), r = WG.row(i);
-    if (!isPassable(i) || c < 6 || c > WW * 0.5 || r < 6 || r > WH - 7) continue;
+    if (!isPassable(i) || c < 18 || c > WW * 0.5 || r < 18 || r > WH - 20) continue;
     const ocean = WG.neighbors(i).filter((n) => OCEAN[n]);
-    if (!ocean.length) continue;
-    const room = WG.within(i, 3).filter(isPassable).length;
-    const score = room + hash2(i, 1, seed) * 3 - Math.abs(r - WH / 2) * 0.3;
+    if (!ocean.length || hash2(i, 3, seed) > 0.35) continue;   // sample a subset of the coast
+    const room = WG.within(i, 7).filter(isPassable).length;
+    const score = room + hash2(i, 1, seed) * 8 - Math.abs(r - WH / 2) * 0.35;
     if (score > bestScore) { bestScore = score; best = i; }
   }
-  if (best < 0) best = WG.idx(12, Math.floor(WH / 2));
+  if (best < 0) best = WG.idx(36, Math.floor(WH / 2));
   const cap = best;
   S.world.capital = cap;
   S.world.terrain[cap] = T.PLAINS;
-  WG.neighbors(cap).forEach((n) => { if (terrain[n] === T.MOUNTAIN || terrain[n] === T.SWAMP) terrain[n] = T.MEADOW; });
+  // a buildable heartland: no mountains/swamp right next to the capital
+  for (const n of WG.within(cap, 3)) if (terrain[n] === T.MOUNTAIN || (terrain[n] === T.SWAMP && WG.dist(n, cap) < 2)) terrain[n] = T.MEADOW;
   S.world.harbor = WG.neighbors(cap).filter((n) => OCEAN[n]).sort((a, b) => WDEPTH[b] - WDEPTH[a])[0];
   deriveWorld();
 
@@ -85,12 +87,12 @@ function generateWorld() {
   // --- AI kingdoms ---
   const caps = [];
   for (let pass = 0; pass < 3 && caps.length < 6; pass++) {
-    const minP = [9, 7, 5][pass], minK = [7, 6, 4][pass];
-    for (let tries = 0; tries < 3000 && caps.length < 6; tries++) {
+    const minP = [27, 21, 15][pass], minK = [21, 18, 12][pass];
+    for (let tries = 0; tries < 6000 && caps.length < 6; tries++) {
       const i = Math.floor(rng() * N);
       if (!main[i] || terrain[i] === T.SWAMP || WG.dist(i, cap) < minP || caps.some((k) => WG.dist(k, i) < minK)) continue;
       const c = WG.col(i), r = WG.row(i);
-      if (c < 2 || r < 2 || c > WW - 3 || r > WH - 3) continue;
+      if (c < 6 || r < 6 || c > WW - 7 || r > WH - 7) continue;
       caps.push(i);
     }
   }
@@ -98,16 +100,17 @@ function generateWorld() {
   S.kingdoms = caps.map((ci, k) => {
     const hall = 1 + (k % 3);
     terrain[ci] = terrain[ci] === T.DESERT ? T.DESERT : T.PLAINS;
+    for (const n of WG.within(ci, 2)) if (terrain[n] === T.MOUNTAIN) terrain[n] = T.PLAINS;
     const coastal = WG.neighbors(ci).some((n) => OCEAN[n]);
     const kd = { id: k, name: KINGDOM_NAMES[k], ruler: RULERS[k], color: KINGDOM_COLORS[k], capital: ci, hall,
       power: Math.round(140 + hall * 120 + rng() * 90), defense: Math.round(40 * hall + rng() * 40), navy: coastal ? Math.round(80 + rng() * 100 * hall) : 0,
       res: { gold: 800 * hall, iron: 300 * hall, lumber: 700 * hall, food: 600 * hall, diamonds: 10 * hall },
       personality: pers[k % pers.length], relation: Math.round(rng() * 50 - 22), allianceId: null, defeats: 0,
       coastal, treaty: 0, tradePact: false, atWar: false };
-    claimAround(ci, k);
+    claimAround(ci, k, 3 + hall);
     return kd;
   });
-  claimAround(cap, -2);
+  claimAround(cap, -2, 4);
 
   // --- Features ---
   const feat = S.world.feat, free = (i) => !feat[i] && S.world.owner[i] === -1;
@@ -121,49 +124,53 @@ function generateWorld() {
       if (free(i) && test(i)) { feat[i] = make(i); placed++; }
     }
   };
-  const tierOf = (i) => clamp(Math.ceil(WG.dist(i, cap) / 9), 1, 3);
-  place(land, Math.round(land.length * 0.025), (i) => [T.HILLS, T.DESERT, T.PLAINS].includes(terrain[i]), () => ({ type: 'goldvein' }));
-  place(land, 12, (i) => isPassable(i) && (terrain[i] === T.HILLS || WG.neighbors(i).some((n) => terrain[n] === T.MOUNTAIN)) && farFromCapitals(i, 2),
+  const tierOf = (i) => clamp(Math.ceil(WG.dist(i, cap) / 27), 1, 3);
+  place(land, Math.round(land.length * 0.004), (i) => [T.HILLS, T.DESERT, T.PLAINS].includes(terrain[i]), () => ({ type: 'goldvein' }));
+  place(land, 20, (i) => isPassable(i) && (terrain[i] === T.HILLS || WG.neighbors(i).some((n) => terrain[n] === T.MOUNTAIN)) && farFromCapitals(i, 8),
     () => ({ type: 'cave', mineral: weighted({ iron: 5, gold: 3, gems: 2 }), explored: false }));
   // Island gem caves & pirate coves
   const islandLand = land.filter((i) => !main[i] && isPassable(i));
   place(islandLand, 3, () => true, () => ({ type: 'cave', mineral: 'gems', explored: false }));
   place(islandLand, 2, (i) => WG.neighbors(i).some((n) => OCEAN[n]), () => ({ type: 'cove', power: Math.round(380 + rng() * 260), destroyed: false }));
-  place(land, 12, (i) => isPassable(i) && farFromCapitals(i, 3), (i) => { const t = tierOf(i); return { type: 'ruins', tier: t, guard: Math.round(50 * t ** 1.7 + rng() * 40), looted: false }; });
-  place(land, 4, (i) => isPassable(i) && farFromCapitals(i, 4) && main[i], (i) => { const t = tierOf(i); return { type: 'fort', tier: t, guard: Math.round(160 + 140 * t + rng() * 60), captured: false }; });
-  place(water, 10, (i) => OCEAN[i] && WDEPTH[i] >= 1 && WG.dist(i, cap) >= 3, (i) => ({ type: 'wreck', tier: tierOf(i), salvaged: false }));
-  reveal(cap, 3);
+  place(land, 14, (i) => isPassable(i) && farFromCapitals(i, 9), (i) => { const t = tierOf(i); return { type: 'ruins', tier: t, guard: Math.round(50 * t ** 1.7 + rng() * 40), looted: false }; });
+  place(land, 5, (i) => isPassable(i) && farFromCapitals(i, 12) && main[i], (i) => { const t = tierOf(i); return { type: 'fort', tier: t, guard: Math.round(160 + 140 * t + rng() * 60), captured: false }; });
+  place(water, 14, (i) => OCEAN[i] && WDEPTH[i] >= 2 && WG.dist(i, cap) >= 9, (i) => ({ type: 'wreck', tier: tierOf(i), salvaged: false }));
+  reveal(cap, 10);
   deriveWorld();
 }
 
-function claimAround(i, who) {
+function claimAround(i, who, r = 1) {
   const { owner } = S.world;
   owner[i] = who;
-  for (const n of WG.neighbors(i)) if (isPassable(n) && owner[n] === -1) owner[n] = who;
+  for (const n of WG.within(i, r)) if (isPassable(n) && owner[n] === -1) owner[n] = who;
 }
 function reveal(i, r) {
   let n = 0;
   for (const j of WG.within(i, r)) if (!S.world.seen[j]) { S.world.seen[j] = 1; n++; }
-  if (n) { UI.panelDirty = true; fogDirty = true; }
+  if (n) { UI.panelDirty = true; fogDirty = true; seenCount += n; }
   return n;
 }
-let fogDirty = true;
+let fogDirty = true, seenCount = 0;
 const isSeen = (i) => i >= 0 && S.world.seen[i] === 1;
 const playerTiles = () => S.world.owner.reduce((s, o) => s + (o === -2 ? 1 : 0), 0);
 const kingdomTiles = (id) => S.world.owner.reduce((s, o) => s + (o === id ? 1 : 0), 0);
 const visionBonus = () => R('cartography');
 
 function distToTerritory(i) {
-  let best = 99;
+  let best = 999;
   const { owner } = S.world;
   for (let j = 0; j < owner.length; j++) if (owner[j] === -2) { const d = WG.dist(i, j); if (d < best) best = d; }
   return best;
 }
-// Claim any explored land anywhere; the further from your borders, the pricier.
+// Claiming takes the clicked hex plus its neutral neighbours (a small piece of land).
+function claimCluster(i) {
+  return [i].concat(WG.neighbors(i)).filter((j) => S.world.owner[j] === -1 && isPassable(j) && isSeen(j) && !(S.world.feat[j] && ['fort', 'ruins', 'cove'].includes(S.world.feat[j].type) && !(S.world.feat[j].captured || S.world.feat[j].looted || S.world.feat[j].destroyed)));
+}
 function claimCost(i) {
-  const n = Math.max(0, playerTiles() - 7), far = i != null ? Math.max(0, distToTerritory(i) - 1) : 0;
-  const m = 1 + 0.2 * far;
-  return { gold: Math.round((150 * Math.pow(1.14, n) * m) / 5) * 5, food: Math.round((80 * Math.pow(1.1, n) * m) / 5) * 5 };
+  const n = Math.max(0, playerTiles() - 60), far = i != null ? Math.max(0, distToTerritory(i) - 1) : 0;
+  const hexes = i != null ? Math.max(1, claimCluster(i).length) : 7;
+  const m = (1 + 0.06 * far) * Math.pow(1.004, n) * hexes;
+  return { gold: Math.round((28 * m) / 5) * 5, food: Math.round((14 * m) / 5) * 5 };
 }
 function claimError(i) {
   const { terrain, owner } = S.world;
@@ -172,23 +179,23 @@ function claimError(i) {
   if (terrain[i] === T.MOUNTAIN) return 'Mountains cannot be settled';
   if (owner[i] === -2) return 'Already yours';
   if (owner[i] >= 0) return `Owned by ${S.kingdoms[owner[i]].name} — send a division to conquer it`;
-  if (playerTiles() >= territoryLimit()) return `Territory limit (${territoryLimit()}) — upgrade the Main Hall or research Administration`;
   const f = S.world.feat[i];
   if (f && f.type === 'fort' && !f.captured) return 'Capture the fort with a division';
   if (f && f.type === 'ruins' && !f.looted) return 'Explore the ruins with a division first';
   if (f && f.type === 'cove' && !f.destroyed) return 'Destroy the pirate cove first';
+  if (playerTiles() + claimCluster(i).length > territoryLimit()) return `Territory limit (${territoryLimit()} hexes) — upgrade the Main Hall or research Administration`;
   if (!canAfford(claimCost(i))) return 'Not enough resources';
   return null;
 }
 function claimTile(i) {
   const err = claimError(i);
   if (err) { toast(err, 'bad'); return false; }
+  const cl = claimCluster(i);
   pay(claimCost(i));
-  S.world.owner[i] = -2;
-  reveal(i, 1);
-  const t = TERRAIN[S.world.terrain[i]];
-  log(`Claimed ${t.name} (${WG.col(i)},${WG.row(i)}).`, 'good');
-  toast(`🏳️ ${t.name} claimed!`, 'good');
+  for (const j of cl) S.world.owner[j] = -2;
+  reveal(i, 3);
+  log(`Claimed ${cl.length} hexes of ${TERRAIN[S.world.terrain[i]].name} at ${hexName(i)}.`, 'good');
+  toast(`🏳️ ${cl.length} hexes claimed!`, 'good');
   worldVersion++;
   UI.panelDirty = true;
   return true;
@@ -196,7 +203,7 @@ function claimTile(i) {
 
 /* ---- Scouting: scout parties are units you move on the map ----
    Every hex they pass through (and a radius around it) is revealed. */
-const scoutRadius = () => { const lodge = S.buildings.find((b) => b.type === 'scoutlodge' && b.level > 0); return 2 + Math.floor((lodge ? lodge.level : 0) / 2) + visionBonus(); };
+const scoutRadius = () => { const lodge = S.buildings.find((b) => b.type === 'scoutlodge' && b.level > 0); return 5 + (lodge ? lodge.level : 0) + 2 * visionBonus(); };
 const scoutCost = (i) => { const t = S.world.terrain[i]; return t === T.WATER ? (transportCapacity() > 0 ? 1.2 : Infinity) : t === T.MOUNTAIN ? 3 : TERRAIN[t].cost; };
 function dispatchScouts(n, dest) {
   n = Math.min(n, S.army.scout);
@@ -212,9 +219,9 @@ function scoutEnter(p) {
   reveal(p.at, scoutRadius());
   const f = S.world.feat[p.at];
   if (f && f.type === 'cave' && !f.explored) { f.explored = true; log(`Scouts found ${MINERALS[f.mineral].name} in a cave!`, 'good'); toast(`🕳️ Scouts found ${MINERALS[f.mineral].name}`, 'good'); }
-  for (const k of S.kingdoms) if (WG.dist(k.capital, p.at) <= scoutRadius() + 1) { if (!S.intel[k.id] || S.time - S.intel[k.id].t > 60) log(`Scouts gathered intel on ${k.name}.`, 'info'); gatherIntel(k); }
+  for (const k of S.kingdoms) if (WG.dist(k.capital, p.at) <= scoutRadius() + 2) { if (!S.intel[k.id] || S.time - S.intel[k.id].t > 60) log(`Scouts gathered intel on ${k.name}.`, 'info'); gatherIntel(k); }
   const o = S.world.owner[p.at];
-  if (o >= 0 && Math.random() < 0.04 * (hostileToPlayer(S.kingdoms[o]) ? 2 : 1) * (1 - 0.25 * R('espionage'))) {
+  if (o >= 0 && Math.random() < 0.015 * (hostileToPlayer(S.kingdoms[o]) ? 2 : 1) * (1 - 0.25 * R('espionage'))) {
     p.n--; p.name = `Scouts ×${p.n}`;
     log(`A scout was captured by ${S.kingdoms[o].name}.`, 'bad');
     if (p.n <= 0) { S.scouts = S.scouts.filter((x) => x !== p); if (UI.selEntity && UI.selEntity.id === p.id) UI.selEntity = null; toast('🔭 Your scout party was captured', 'bad'); }
@@ -242,76 +249,18 @@ function transferBorderTile(fromId, toId) {
   return -1;
 }
 
-/* ---- Buildings on territory hexes ---- */
-const tbAt = (i) => S.world.bld[i];
-const tbCost = (type, lvl) => scaleCost(TERRITORY_BUILDINGS[type].cost, Math.pow(1.9, lvl - 1));
-const tbTime = (type, lvl) => Math.round(TERRITORY_BUILDINGS[type].time * Math.pow(lvl, 1.4) * (1 - 0.12 * R('architecture')));
-const hexCoastal = (i) => WG.neighbors(i).some((n) => OCEAN[n]);
-function tbAllowed(type, i) {
-  const t = S.world.terrain[i];
-  return TERRITORY_BUILDINGS[type].on(t, S.world.feat[i], hexCoastal(i));
-}
-function tbError(type, i, upgrade) {
-  if (S.world.owner[i] !== -2) return 'You must own this hex';
-  if (i === S.world.capital) return 'Build in your capital from the Kingdom view';
-  const cur = tbAt(i);
-  if (!upgrade && cur) return 'This hex already has a building';
-  if (upgrade && (!cur || cur.level >= TB_MAX)) return 'Max level';
-  if (cur && cur.build > 0) return 'Under construction';
-  if (!upgrade && !tbAllowed(type, i)) return `Can't build a ${TERRITORY_BUILDINGS[type].name} on ${TERRAIN[S.world.terrain[i]].name}`;
-  if (!canAfford(tbCost(type, upgrade ? cur.level + 1 : 1))) return 'Not enough resources';
-  return null;
-}
-function buildTerritory(type, i) {
-  const upgrade = !!tbAt(i);
-  if (upgrade) type = tbAt(i).type;
-  const err = tbError(type, i, upgrade);
-  if (err) { toast(err, 'bad'); return false; }
-  const lvl = upgrade ? tbAt(i).level + 1 : 1;
-  pay(tbCost(type, lvl));
-  const t = tbTime(type, lvl);
-  if (upgrade) Object.assign(tbAt(i), { build: t, total: t });
-  else S.world.bld[i] = { type, level: 0, build: t, total: t };
-  toast(`${TERRITORY_BUILDINGS[type].icon} ${TERRITORY_BUILDINGS[type].name} ${upgrade ? 'upgrading' : 'under construction'} at ${hexName(i)}`, 'good');
-  UI.panelDirty = true;
-  return true;
-}
-function stepTerritory(dt) {
-  for (const [k, b] of Object.entries(S.world.bld)) {
-    const i = +k;
-    if (S.world.owner[i] !== -2) { delete S.world.bld[k]; continue; }   // lost the hex → building gone
-    if (b.build > 0) {
-      b.build -= dt;
-      if (b.build <= 0) {
-        b.build = 0; b.level++;
-        const d = TERRITORY_BUILDINGS[b.type];
-        log(`${d.name} ${b.level === 1 ? 'built' : 'upgraded to level ' + b.level} at ${hexName(i)}.`, 'good');
-        if (d.vision) reveal(i, d.vision + b.level - 1);
-        UI.panelDirty = true;
-      }
-    }
-  }
-}
-function tbProduction(i) {
-  const b = tbAt(i);
-  if (!b || b.level < 1) return null;
-  const d = TERRITORY_BUILDINGS[b.type], out = {};
-  if (d.prod) for (const [k, v] of Object.entries(d.prod)) out[k] = v * b.level;
-  const f = S.world.feat[i];
-  if (b.type === 'mine' && f) {   // mines triple the special deposit instead of plain iron
-    delete out.iron;
-    if (f.type === 'goldvein') out.gold = 0.6 * 2 * b.level;
-    if (f.type === 'cave' && f.explored) for (const [k, v] of Object.entries(MINERALS[f.mineral].bonus)) out[k] = v * 2 * b.level;
-  }
-  return out;
-}
+/* ---- Docks & defense on the one grid ---- */
+// Fleets can dock (and disband) next to any Port or Shipyard you own.
 function dockAt(water) {
-  for (const n of WG.neighbors(water)) { const b = S.world.bld[n]; if (b && b.type === 'dock' && b.level > 0 && S.world.owner[n] === -2) return n; }
+  for (const n of WG.neighbors(water)) { const b = buildingAt(n); if (b && (b.type === 'port' || b.type === 'shipyard') && b.level > 0) return n; }
   return -1;
 }
-const stationedAt = (i) => S.divisions.filter((d) => d.at === i && !d.path.length && d.status !== 'fighting');
+const stationedAt = (i) => S.divisions.filter((d) => WG.dist(d.at, i) <= 2 && !d.path.length && d.status !== 'fighting');
+const DEF_TYPES = ['tower', 'cannon', 'spire', 'fortress'];
+const defensesNear = (i, r = 3) => S.buildings.filter((b) => DEF_TYPES.includes(b.type) && b.level > 0 && WG.dist(b.hex, i) <= r);
 function hexDefense(i) {
-  const b = tbAt(i), d = b && b.level > 0 ? TERRITORY_BUILDINGS[b.type].def || 0 : 0;
-  return d * (b ? b.level : 0) + stationedAt(i).reduce((s, x) => s + armyPower(x.units, x.general), 0) + (i === S.world.capital ? defenseRating() + armyPower(S.army, S.castellan) : 0);
+  return defensesNear(i).reduce((s2, b) => s2 + BUILDINGS[b.type].def * Math.pow(b.level, 1.25), 0)
+    + stationedAt(i).reduce((s2, x) => s2 + armyPower(x.units, x.general), 0)
+    + (WG.dist(i, S.world.capital) <= 3 ? armyPower(S.army, S.castellan) : 0);
 }
 const isDefended = (i) => hexDefense(i) > 0;
