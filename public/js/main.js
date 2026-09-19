@@ -7,6 +7,10 @@ let lastFrame = performance.now(), hudTimer = 0, panelTimer = 0, saveTimer = 15;
 UI.gameSpeed = 1;
 
 function frame(now) {
+  try { frameInner(now); } catch (e) { console.error(e); }
+  requestAnimationFrame(frame);
+}
+function frameInner(now) {
   let dt = (now - lastFrame) / 1000;
   lastFrame = now;
   if (dt > 1.5) { let t = Math.min(dt, OFFLINE_CAP); while (t > 0) { const d = Math.min(2, t); step(d, true); t -= d; } dt = 0; }  // tab was hidden
@@ -16,12 +20,13 @@ function frame(now) {
   Battles.frame(dt);
   inputFrame(dt);
   const t = now / 1000;
-  if (UI.view === 'kingdom') drawKingdom(ctx, t, dt); else drawWorld(ctx, t, dt);
+  drawWorld(ctx, t, dt);
+  const inCity = cityAlpha() > 0.5;
+  document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', (b.dataset.view === 'kingdom') === inCity));
   hudTimer -= dt; panelTimer -= dt; saveTimer -= dt;
   if (hudTimer <= 0) { updateHud(); renderBattleHud(); hudTimer = 0.15; }
   if (panelTimer <= 0 || (UI.panelDirty && panelTimer < 0.75)) { renderPanel(); panelTimer = 1; }
   if (saveTimer <= 0) { save(); saveTimer = 15; }
-  requestAnimationFrame(frame);
 }
 
 async function boot() {
@@ -55,15 +60,20 @@ async function boot() {
 window.ironcrown = {
   get state() { return S; }, UI, SETTINGS, CAM, Battles, BUILDINGS, UNITS, SHIPS, GENERALS, RESEARCH, version: GAME_VERSION,
   api: { placeBuilding, upgradeBuilding, trainUnits, buildShips, openBox, claimTile, createAlliance, joinAlliance, donate, useItem,
-    createDivision, createFleet, giveOrder, startResearch, assignGeneral, save, load, selectEntity, dispatchScouts, buildTerritory, hireGeneral, launchRaid, promoteGeneral },
+    createDivision, createFleet, giveOrder, setDivisionTroops, splitDivision, mergeDivisions, startResearch, assignGeneral, save, load, selectEntity, dispatchScouts, buildTerritory, hireGeneral, launchRaid, promoteGeneral },
   debug: {
     fastForward(sec) { let t = sec; while (t > 0) { const d = Math.min(1, t); step(d, true); t -= d; } UI.panelDirty = true; renderPanel(true); updateHud(); },
     give(res) { for (const [k, v] of Object.entries(res)) S.res[k] += v; UI.panelDirty = true; updateHud(); },
     hexToClient(view, i) {
-      const r = cv.getBoundingClientRect(), g = view === 'world' ? WG : KG, [x, y] = CAM[view].toScreen(g.cx[i], g.cy[i]);
+      const r = cv.getBoundingClientRect();
+      const [wx, wy] = view === 'world' ? [WG.cx[i], WG.cy[i]] : k2w(KG.cx[i], KG.cy[i]);
+      const [x, y] = CAM.toScreen(wx, wy);
       return { x: r.left + x, y: r.top + y };
     },
-    focus(view, i) { CAM[view].centerOn(i); },
+    focus(view, i) {
+      if (view === 'world') { CAM.centerOn(i); if (CAM.z > 3) CAM.z = 2.2; CAM.clamp(); }
+      else { const [wx, wy] = k2w(KG.cx[i], KG.cy[i]); CAM.z = Math.max(CAM.z, 5.5); CAM.x = wx; CAM.y = wy; CAM.clamp(); }
+    },
     freeHex(type) {
       const cand = KG.within(HALL_HEX, landRadius()).filter((i) => !placementError(type, i)).sort((a, b) => KG.dist(a, HALL_HEX) - KG.dist(b, HALL_HEX));
       return cand.length ? cand[0] : -1;

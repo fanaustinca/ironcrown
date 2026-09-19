@@ -14,14 +14,15 @@ const HELP = [
       <li>Build a <b>University</b> and start <b>🎓 Research</b> early, because it multiplies everything.</li>
     </ol>
     <p class="tip">Tip: hover over anything for a tooltip. The top bar shows every resource with its storage cap and income per minute. Hover a resource for a full breakdown.</p>` },
-  { id: 'camera', icon: '🎥', title: 'Camera & controls', html: `
+  { id: 'camera', icon: '🎥', title: 'One map, camera & controls', html: `
+    <p><b>There is only one map.</b> Your city is drawn to scale on the world map at your capital, and it grows with each Main Hall level. <b>Zoom in</b> (scroll, pinch, or 🏰 City) to build and manage it. <b>Zoom out</b> (🗺️ World) to see the continent: every kingdom's cities and territory buildings, and every army, guard, fleet and battle. Enemy capitals are real cities too: zoom in on one to see its keep, buildings, walls and towers.</p>
     <table class="keys">
       <tr><td>Drag with mouse or finger</td><td>Move the map (default)</td></tr>
       <tr><td>Scroll wheel / pinch</td><td>Zoom in & out</td></tr>
       <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</td><td>Move the map (enable in Settings → Camera)</td></tr>
       <tr><td><kbd>+</kbd> <kbd>−</kbd> / zoom buttons</td><td>Zoom</td></tr>
       <tr><td><kbd>Space</kbd> / ⌖ button</td><td>Recenter on your capital</td></tr>
-      <tr><td><kbd>K</kbd> / <kbd>M</kbd></td><td>Kingdom view / World map</td></tr>
+      <tr><td><kbd>K</kbd> / <kbd>M</kbd></td><td>Fly into your city / zoom out to the world</td></tr>
       <tr><td>Left-click</td><td>Select a building, hex, division or fleet</td></tr>
       <tr><td>Right-click (World)</td><td>Give the selected division/fleet the default order for that hex</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>Cancel placement / deselect / close dialogs</td></tr>
@@ -68,7 +69,8 @@ const HELP = [
         <b>March</b>, <b>Station & guard</b>, <b>Assault</b> an enemy capital, <b>Invade</b> an enemy hex, <b>Explore</b> ruins or caves, <b>Capture</b> a fort, or <b>Intercept</b> an enemy army. Idle divisions next to a fight join it automatically.</li>
       <li>Right-click a hex to give the default order instantly. The route is drawn as a dashed line with an ETA.</li>
       <li>Terrain matters: forests, hills and swamps are slow, and <b>mountains are impassable</b>. To cross water, divisions board transport ships automatically if your Cogs and Galleons have enough capacity.</li>
-      <li>Divisions back at the capital can be <b>reinforced</b> or <b>disbanded</b>. They also help defend the capital while they're home.</li>
+      <li><b>Change a division's size:</b> at the capital, <b>🎚️ Troops</b> sets exactly how many of each soldier it has, with extras going back to the garrison. Anywhere, <b>✂️ Split</b> it into two (the new one needs a general), or <b>🔗 Merge</b> two divisions standing on the same hex.</li>
+      <li>There is <b>no army cap</b>. Train as many soldiers and seamen as you can feed and pay for. Upkeep is food for troops and gold for ships.</li>
       <li>The number of divisions you can field grows with the Main Hall.</li>
     </ul>` },
   { id: 'generals', icon: '🎖️', title: 'Generals & items', html: `
@@ -112,7 +114,7 @@ const HELP = [
         <b>Stance:</b> ${Object.values(STANCES).map((st) => `${st.icon} <b>${st.name}</b> (${st.desc.toLowerCase()})`).join('; ')}.
         <br><b>Target priority:</b> nearest, weakest, archers & siege, cavalry, or towers.</li>
       <li>Set each division's default <b>battle plan</b> on its card. The enemy picks formations to counter yours, for example a Square against cavalry or Skirmish against archers.</li>
-      <li>Bring several divisions: idle divisions within one hex of the fight join as separate groups, so you can flank and combine arms. <b>Auto-resolve</b> finishes a fight instantly, and Settings can auto-resolve every battle.</li>
+      <li><b>Coalition battles:</b> every force within one hex of a fight joins it. Your nearby divisions fight together, an enemy army fights beside its capital's garrison and towers, and allied kingdoms fight on your side. A third kingdom hostile to both sides turns it into a <b>3-way battle</b>, and each side only fights the teams it's hostile to. <b>Auto-resolve</b> finishes a fight instantly, and Settings can auto-resolve every battle.</li>
       <li><b>Counters:</b> Pikemen crush cavalry, Horsemen ride down archers and catapults, Archers shred pikemen, Swordsmen beat archers up close, and Catapults smash towers.</li>
       <li><b>Raids:</b> hostile kingdoms send armies at your <b>weakest land</b>, usually undefended outlying hexes and sometimes the capital. A red ⚠ alert shows the target and ETA, and the target hex pulses red. Intercept the army, station a division on the target, or build a watchtower or fortress. Undefended targets are pillaged without a fight.</li>
       <li>Towers, Cannons and Arcane Spires fight in defense battles. Walls strengthen them. Masonry and Fortification research help too.</li>
@@ -120,6 +122,7 @@ const HELP = [
       <li>Winning an assault on a capital loots its treasury and can seize border hexes.</li>
     </ul>` },
   { id: 'diplomacy', icon: '🕊️', title: 'AI kingdoms & diplomacy', html: `
+    <p>Every kingdom keeps <b>🛡 guard armies</b> that move around its land, and coastal kingdoms keep <b>⚓ navy patrols</b> at sea. You can attack any army or fleet, but attacking a kingdom you aren't at war with makes it hostile.</p>
     <p>Six AI kingdoms live on the map. Each has a personality (Aggressive, Expansionist, Builder, Balanced). They <b>expand</b> their borders, <b>upgrade</b> their keeps, <b>build</b> defenses, <b>train</b> armies, keep <b>navies</b>, and <b>march on each other</b>. You can watch their armies move once you've scouted the area.</p>
     <p>Click a kingdom's land → <b>Diplomacy</b>:</p>
     <ul>

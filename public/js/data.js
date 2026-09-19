@@ -5,7 +5,7 @@
    ========================================================================== */
 'use strict';
 
-const GAME_VERSION = '2.1.0';
+const GAME_VERSION = '2.2.0';
 const SAVE_VERSION = 2;
 
 // Kingdom map (hex grid, pointy-top, odd-r offset)
@@ -13,6 +13,9 @@ const KW = 31, KH = 23, K_HEX = 34;
 const HALL_COL = 14, HALL_ROW = 11;
 // World map
 const WW = 50, WH = 36, W_HEX = 30;
+// One map: the kingdom city is drawn to scale on the world map at the capital.
+const K2W = 0.2;          // kingdom-map units → world-map units
+const CITY_Z = 1.6;       // camera zoom where city detail starts to appear
 
 const MAX_HALL = 6;
 const AI_TICK = 20;               // seconds between AI kingdom turns

@@ -132,7 +132,8 @@ function fogLayer() {
 }
 
 function drawWorld(g, t, dt) {
-  const cam = CAM.world, z = cam.z, { terrain, owner, feat } = S.world;
+  const cam = CAM, z = cam.z, { terrain, owner, feat } = S.world;
+  const ca = cityAlpha(), es = clamp(1.5 / z, 0.2, 1);   // map icons shrink when zoomed into cities
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
   g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH);
   cam.apply(g);
@@ -166,16 +167,28 @@ function drawWorld(g, t, dt) {
   // details, features, capitals — row order for overlap
   const detail = z * W_HEX > 11;
   const sorted = vis.slice().sort((a, b) => a - b);
+  const cap = S.world.capital;
+  // world-scale scenery is hidden under city footprints once the cities fade in
+  const cities = [[cap, cityWorldRadius(landRadius())]].concat(S.kingdoms.filter((k) => isSeen(k.capital)).map((k) => [k.capital, cityWorldRadius(3 + k.hall)]));
+  const underCity = (i) => ca > 0.4 && cities.some(([c, r]) => dist(WG.cx[i], WG.cy[i], WG.cx[c], WG.cy[c]) < r);
   for (const i of sorted) {
+    if (underCity(i)) continue;
     if (detail && isLandW(i)) drawTerrainDetail(g, i, t);
     const f = feat[i];
     if (f && isSeen(i)) drawFeature(g, i, f, t);
     const tb = S.world.bld[i];
     if (tb && isSeen(i)) drawTerritoryBuilding(g, i, tb, t);
+    else if (isSeen(i)) { const ab = aiTerritoryBuilding(i); if (ab) drawTerritoryBuilding(g, i, ab, t); }
   }
-  const cap = S.world.capital;
-  drawCastle(g, WG.cx[cap], WG.cy[cap], 36, '#f2c14e', true);
-  for (const k of S.kingdoms) if (isSeen(k.capital)) drawCastle(g, WG.cx[k.capital], WG.cy[k.capital], 30 + k.hall * 2, k.color, k.hall >= 4);
+  for (const k of S.kingdoms) drawAiCity(g, k, t);
+  drawCity(g, t, dt);
+  g.globalAlpha = 1 - ca;
+  if (g.globalAlpha > 0.02) {
+    drawCastle(g, WG.cx[cap], WG.cy[cap], 36, '#f2c14e', true);
+    for (const k of S.kingdoms) if (isSeen(k.capital)) drawCastle(g, WG.cx[k.capital], WG.cy[k.capital], 30 + k.hall * 2, k.color, k.hall >= 4);
+  }
+  g.globalAlpha = 1;
+  const icon = (x, y, fn) => { g.save(); g.translate(x, y); g.scale(es, es); fn(); g.restore(); };
   // paths of selected entity & visible enemy raids
   const selE = selectedEntity();
   const pathLine = (e, color, dash) => {
@@ -194,7 +207,8 @@ function drawWorld(g, t, dt) {
   for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3; g.beginPath(); WG.hexPath(g, a.targetHex, 0.85); g.stroke(); }
   // scout parties
   for (const p of S.scouts) {
-    const [x, y] = entPos(p), sel = selE === p;
+    const [px0, py0] = entPos(p), sel = selE === p;
+    g.save(); g.translate(px0, py0); g.scale(es, es); const x = 0, y = 0;
     if (sel) { g.strokeStyle = '#7fd4ff'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 4, 13 + Math.sin(t * 5), 0, 7); g.stroke(); }
     shadow(g, x, y + 5, 7, 2.5);
     const bob = p.path.length ? Math.abs(Math.sin(t * 10)) * 1.5 : 0;
@@ -203,50 +217,62 @@ function drawWorld(g, t, dt) {
     g.strokeStyle = '#c9a44a'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x + 2, y - 11 - bob); g.lineTo(x + 8, y - 13 - bob); g.stroke();
     g.fillStyle = 'rgba(12,14,20,.85)'; g.fillRect(x - 10, y + 5, 20, 11);
     g.fillStyle = '#7fd4ff'; g.font = 'bold 8px sans-serif'; g.textAlign = 'center'; g.fillText(`🔭${p.n}`, x, y + 13); g.textAlign = 'left';
+    g.restore();
   }
   // AI forces (only where you can see them)
   for (const a of S.aiArmies) {
     if (!isSeen(a.at)) continue;
+    if (a.status === 'fighting') continue;
     const [x, y] = entPos(a), k = S.kingdoms[a.kid];
-    drawBanner(g, x, y, k.color, a.kind === 'raid' ? '⚔' : '', armyHousing(a.units), t, false, a.kind === 'raid' || hostileToPlayer(k));
+    icon(x, y, () => drawBanner(g, 0, 0, k.color, a.kind === 'raid' ? '⚔' : a.kind === 'guard' ? '🛡' : '', armyHousing(a.units), t, false, a.kind === 'raid' || hostileToPlayer(k)));
   }
   for (const f of S.aiFleets) {
     if (!isSeen(f.at)) continue;
+    if (f.status === 'fighting') continue;
     const [x, y] = entPos(f), pirate = f.owner === 'pirate';
-    const nx = f.path.length ? WG.cx[f.path[0]] : x;
-    drawShip(g, x, y, pirate ? 'frigate' : 'galley', pirate ? '#222' : S.kingdoms[f.owner].color, nx >= x ? 1 : -1, t + x, false, pirate, 0.9);
+    const nx = f.path.length ? WG.cx[f.path[0]] : x, main = SHIP_TYPES.slice().reverse().find((st) => f.ships[st] > 0) || 'galley';
+    icon(x, y, () => {
+      drawShip(g, 0, 0, main, pirate ? '#222' : S.kingdoms[f.owner].color, nx >= x ? 1 : -1, t + x, false, pirate, 0.9);
+      g.fillStyle = 'rgba(12,14,20,.85)'; g.fillRect(-14, 8, 28, 12);
+      g.fillStyle = pirate ? '#ddd' : shade(S.kingdoms[f.owner].color, 0.3); g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.fillText(`⚓${shipCount(f.ships)}`, 0, 17); g.textAlign = 'left';
+    });
   }
   // player forces
   for (const f of S.fleets) {
-    const [x, y] = entPos(f), nx = f.path.length ? WG.cx[f.path[0]] : x + 1;
+    if (f.status === 'fighting') continue;
+    const [fx0, fy0] = entPos(f), nx = f.path.length ? WG.cx[f.path[0]] : fx0 + 1;
+    g.save(); g.translate(fx0, fy0); g.scale(es, es); const x = 0, y = 0;
     if (f === selE) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 6, 20 + Math.sin(t * 5) * 1.5, 0, 7); g.stroke(); }
     const main = SHIP_TYPES.slice().reverse().find((st) => f.ships[st] > 0) || 'sloop';
-    drawShip(g, x, y, main, '#f2c14e', nx >= x ? 1 : -1, t + x, false, false, 1);
+    drawShip(g, x, y, main, '#f2c14e', nx >= fx0 ? 1 : -1, t + fx0, false, false, 1);
     g.fillStyle = 'rgba(12,14,20,.85)'; g.fillRect(x - 14, y + 8, 28, 12);
     g.fillStyle = '#f2c14e'; g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.fillText(`⚓${shipCount(f.ships)}`, x, y + 17); g.textAlign = 'left';
+    g.restore();
   }
   for (const d of S.divisions) {
     if (d.status === 'fighting') continue;
-    const [x, y] = entPos(d);
-    const off = d.at === cap && !d.path.length ? (S.divisions.indexOf(d) - (S.divisions.length - 1) / 2) * 16 : 0;
+    const [dx0, dy0] = entPos(d);
+    const off = d.at === cap && !d.path.length ? (S.divisions.indexOf(d) - (S.divisions.length - 1) / 2) * 16 * es : 0;
     const water = isWater(d.at);
-    if (water) drawShip(g, x + off, y, 'cog', d.color, 1, t, false, false, 0.8);
-    drawBanner(g, x + off, y - (water ? 10 : 0), d.color, '', armyHousing(d.units), t, d === selE, false);
+    icon(dx0 + off, dy0, () => {
+      if (water) drawShip(g, 0, 0, 'cog', d.color, 1, t, false, false, 0.8);
+      drawBanner(g, 0, water ? -10 : 0, d.color, '', armyHousing(d.units), t, d === selE, false);
+    });
   }
   drawCloudShadows(g, WG, t);
   Battles.draw(g, t);
   // fog
   g.drawImage(fogLayer(), -20 / FOG_SCALE, -20 / FOG_SCALE, fogCache.width / FOG_SCALE, fogCache.height / FOG_SCALE);
   // labels (on top of fog so known names stay readable)
-  const fs = clamp(12 / z, 5, 40);
+  const fs = clamp(12 / z, 1.6, 40);
   g.font = `bold ${fs}px sans-serif`; g.textAlign = 'center';
   const label = (text, x, y, c) => { const w = g.measureText(text).width + 10; g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - w / 2, y - fs, w, fs * 1.35); g.fillStyle = c; g.fillText(text, x, y); };
   label(S.name, WG.cx[cap], WG.cy[cap] + 34, '#f2c14e');
   for (const k of S.kingdoms) if (isSeen(k.capital)) label(`${k.name} · ${k.hall}${k.atWar ? ' ⚔' : ''}`, WG.cx[k.capital], WG.cy[k.capital] + 32, shade(k.color, 0.35));
   g.textAlign = 'left';
   // selection + hover
-  if (UI.worldSel >= 0) { g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 0.92); g.stroke(); g.strokeStyle = '#f2c14e'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 1.05); g.stroke(); }
-  if (UI.hover >= 0) { g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.hover, 0.95); g.stroke(); }
+  if (UI.worldSel >= 0 && !(ca > 0.5 && UI.worldSel === cap)) { g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 0.92); g.stroke(); g.strokeStyle = '#f2c14e'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.worldSel, 1.05); g.stroke(); }
+  if (UI.hover >= 0 && !(ca > 0.5 && UI.khover >= 0)) { g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.5; g.beginPath(); WG.hexPath(g, UI.hover, 0.95); g.stroke(); }
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
   drawAtmosphere(g);
   drawMinimap(t);
@@ -257,7 +283,7 @@ let miniCache = null, miniKey = '';
 function drawMinimap() {
   const mc = el('minimap');
   if (!mc) return;
-  mc.hidden = !SETTINGS.minimap || UI.view !== 'world';
+  mc.hidden = !SETTINGS.minimap;
   if (mc.hidden) return;
   const W = 200, H = Math.round(W * WG.ph / WG.pw), sc = W / WG.pw;
   if (mc.width !== W * DPR) { mc.width = W * DPR; mc.height = H * DPR; mc.style.width = W + 'px'; mc.style.height = H + 'px'; }
@@ -285,7 +311,7 @@ function drawMinimap() {
   for (const f of S.fleets) { const [x, y] = entPos(f); g.fillRect(x - 25, y - 25, 50, 50); }
   g.fillStyle = '#ff5a4f';
   for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) { const [x, y] = entPos(a); g.fillRect(x - 30, y - 30, 60, 60); }
-  const cam = CAM.world, [x0, y0] = cam.toWorld(0, 0), [x1, y1] = cam.toWorld(CW, CH);
+  const cam = CAM, [x0, y0] = cam.toWorld(0, 0), [x1, y1] = cam.toWorld(CW, CH);
   g.strokeStyle = '#fff'; g.lineWidth = 2 / sc; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
 }
 function selectedEntity() {

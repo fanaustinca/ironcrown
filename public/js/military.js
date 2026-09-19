@@ -12,7 +12,7 @@ const scoutsAfield = () => (S.scouts || []).reduce((s, p) => s + p.n, 0);
 const queuedHousing = () => S.buildings.reduce((s, b) => s + (b.queue && BUILDINGS[b.type].trains ? b.queue.reduce((q, u) => q + UNITS[u].housing, 0) : 0), 0);
 const totalHousing = () => armyHousing(S.army) + S.divisions.reduce((s, d) => s + armyHousing(d.units), 0) + queuedHousing() + scoutsAfield();
 const armyCap = () => 10 + 15 * hallLevel() + S.buildings.filter((b) => BUILDINGS[b.type].trains).reduce((s, b) => s + 3 * b.level, 0);
-const queueLimit = (b) => 5 + 5 * b.level;
+const queueLimit = (b) => 20 + 10 * b.level;   // no army cap — only the queue length and upkeep limit you
 const trainerOf = (u) => S.buildings.filter((b) => b.type === UNITS[u].from && b.level > 0).sort((a, b) => b.level - a.level)[0];
 const shipyardLevel = () => Math.max(0, ...S.buildings.filter((b) => b.type === 'shipyard').map((b) => b.level));
 function allShips() {
@@ -170,7 +170,6 @@ function trainUnits(u, n) {
   let made = 0;
   for (let i = 0; i < n; i++) {
     if (b.queue.length >= queueLimit(b)) { if (!made) toast('Training queue is full', 'bad'); break; }
-    if (totalHousing() + U.housing > armyCap()) { if (!made) toast('Army housing is full — upgrade the Main Hall or military buildings', 'bad'); break; }
     if (!pay(U.cost)) { if (!made) toast('Not enough resources', 'bad'); break; }
     if (!b.queue.length) b.trainLeft = trainTime(u);
     b.queue.push(u);
@@ -203,8 +202,7 @@ function buildShips(t, n) {
   let made = 0;
   for (let i = 0; i < n; i++) {
     const b = yards.sort((a, c) => a.queue.length - c.queue.length)[0];
-    if (b.queue.length >= 3 + 2 * b.level) { if (!made) toast('Shipyard queue is full', 'bad'); break; }
-    if (shipCount(allShips()) + queuedShips() >= navalCap()) { if (!made) toast('Naval capacity reached — upgrade your shipyards', 'bad'); break; }
+    if (b.queue.length >= 8 + 4 * b.level) { if (!made) toast('Shipyard queue is full', 'bad'); break; }
     if (S.army.seaman < SHIPS[t].crew) { if (!made) toast(`Needs ${SHIPS[t].crew} Seamen`, 'bad'); break; }
     if (!pay(shipCost(t))) { if (!made) toast('Not enough resources', 'bad'); break; }
     S.army.seaman -= SHIPS[t].crew;
@@ -261,6 +259,46 @@ function reinforceDivision(d, units) {
   for (const u of Object.keys(units)) { const n = Math.min(units[u], S.army[u]); S.army[u] -= n; d.units[u] += n; }
   UI.panelDirty = true;
 }
+/* ---- Changing a division's size ---- */
+// At the capital: set exact troop numbers (the difference moves to/from the garrison).
+function setDivisionTroops(d, target) {
+  if (!atHome(d)) { toast('Troops can be added or removed at the capital — or split/merge divisions in the field', 'bad'); return false; }
+  const next = {};
+  for (const u of Object.keys(UNITS)) { if (u === 'seaman') continue; next[u] = clamp(Math.floor(target[u] ?? d.units[u] ?? 0), 0, (d.units[u] || 0) + (S.army[u] || 0)); }
+  if (armyHousing(next) <= 0) { toast('A division needs at least one soldier — disband it instead', 'bad'); return false; }
+  for (const u of Object.keys(next)) { S.army[u] += (d.units[u] || 0) - next[u]; d.units[u] = next[u]; }
+  UI.panelDirty = true;
+  return true;
+}
+// Anywhere: split part of a division off into a new one (needs an idle general).
+function splitDivision(d, units, name, gid) {
+  if (d.status === 'fighting') return null;
+  if (S.divisions.length >= divisionLimit()) { toast(`Division limit (${divisionLimit()})`, 'bad'); return null; }
+  if (!gid || generalPost(gid).kind !== 'none') { toast('The new division needs its own idle general', 'bad'); return null; }
+  const take = {};
+  for (const u of Object.keys(d.units)) take[u] = clamp(Math.floor(units[u] || 0), 0, d.units[u]);
+  const rest = {}; for (const u of Object.keys(d.units)) rest[u] = d.units[u] - take[u];
+  if (armyHousing(take) <= 0 || armyHousing(rest) <= 0) { toast('Both divisions need at least one soldier', 'bad'); return null; }
+  d.units = { ...emptyArmy(), ...rest };
+  const nd = { id: 'd' + uid(), name: (name || '').trim().slice(0, 24) || d.name + ' II', color: DIVISION_COLORS[S.divisions.length % DIVISION_COLORS.length],
+    units: { ...emptyArmy(), ...take }, general: gid, at: d.at, path: [], prog: 0, order: null, status: 'idle', formation: d.formation, stance: d.stance, target: d.target };
+  S.divisions.push(nd);
+  log(`${nd.name} split off from ${d.name}.`, 'info');
+  UI.panelDirty = true;
+  return nd;
+}
+// Two divisions on the same hex become one; the absorbed one's general is freed.
+function mergeDivisions(into, from) {
+  if (into === from || into.at !== from.at || into.path.length || from.path.length) { toast('Both divisions must be standing on the same hex', 'bad'); return false; }
+  for (const u of Object.keys(from.units)) into.units[u] = (into.units[u] || 0) + from.units[u];
+  from.general = null;
+  S.divisions = S.divisions.filter((x) => x !== from);
+  if (UI.selEntity && UI.selEntity.id === from.id) UI.selEntity = { kind: 'division', id: into.id };
+  log(`${from.name} merged into ${into.name}.`, 'info');
+  UI.panelDirty = true;
+  return true;
+}
+
 function createFleet(name, ships, gid) {
   if (S.fleets.length >= fleetLimit()) { toast(`Fleet limit (${fleetLimit()}) — build more shipyards`, 'bad'); return null; }
   const take = {};

@@ -63,14 +63,15 @@ function newGame(name) {
     log: [], stats: { battlesWon: 0, battlesLost: 0, navalWon: 0, navalLost: 0, raidsRepelled: 0, raidsLost: 0, boxesOpened: 0, scouted: 0, ruinsExplored: 0, wrecksSalvaged: 0, researched: 0 },
     aiTimer: AI_TICK, raidTimer: 540, pirateTimer: 420,
   };
-  deriveKingdom();
+  generateWorld();
+  deriveKingdom();                       // the city's land & coast come from the world map
   addBuilding('hall', HALL_HEX, 1);
   const spots = kingdomStartSpots();
   addBuilding('goldmine', spots[0], 1);
   addBuilding('lumbermill', spots[1], 1);
   addBuilding('farm', spots[2], 1);
-  generateWorld();
   createAlliances();
+  S.kingdoms.forEach(initAiForces);
   // Starting division so the world map is alive from minute one.
   createDivision('1st Legion', { archer: 4, swordsman: 4 }, 'g1');
   log('Your reign begins. Build up your kingdom, then explore the world map.', 'info');
@@ -94,9 +95,10 @@ function load() {
       return false;
     }
     S = data;
+    deriveWorld();
     migrate();
     deriveKingdom();
-    deriveWorld();
+    relocateStrandedBuildings();
     return true;
   } catch { return false; }
 }
@@ -121,6 +123,7 @@ function migrate() {
   for (const d of S.divisions) { d.formation = d.formation || 'line'; d.stance = d.stance || 'advance'; d.target = d.target || 'nearest'; if (d.status === 'fighting') d.status = 'idle'; }
   for (const f of S.fleets) { f.formation = f.formation || 'line'; f.stance = f.stance || 'advance'; f.target = f.target || 'nearest'; if (f.status === 'fighting') f.status = 'idle'; }
   for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex == null) a.targetHex = S.world.capital;
+  for (const k of S.kingdoms) { k.wars = k.wars || {}; if (k.guardsInit == null) initAiForces(k); }
 }
 
 // Offline progress: simulate time the tab was closed (capped, no raids).

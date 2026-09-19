@@ -8,24 +8,29 @@ let KT = new Uint8Array(KG.N);       // 1 = land, 0 = water (kingdom map)
 let KDEPTH = new Int16Array(KG.N);    // water depth in hexes from shore
 let KCLEARED = new Set();
 
+// Kingdom-map ↔ world-map coordinates (the city sits on the capital world hex).
+const k2w = (kx, ky) => [WG.cx[S.world.capital] + (kx - KG.cx[HALL_HEX]) * K2W, WG.cy[S.world.capital] + (ky - KG.cy[HALL_HEX]) * K2W];
+const w2k = (wx, wy) => [KG.cx[HALL_HEX] + (wx - WG.cx[S.world.capital]) / K2W, KG.cy[HALL_HEX] + (wy - WG.cy[S.world.capital]) / K2W];
 function deriveKingdom() {
-  const seed = S.seed;
-  const hx = KG.cx[HALL_HEX], hy = KG.cy[HALL_HEX], w = K_HEX * SQ3;
+  // Land/water of the city = the world terrain underneath it.
   for (let i = 0; i < KG.N; i++) {
-    const x = KG.cx[i], y = KG.cy[i];
-    // Irregular eastern coastline with a bay and a headland.
-    const shore = hx + w * (5.4 + 2.2 * (fbm(y * 0.006, 3.3, seed + 11, 3) - 0.5) * 2 - 1.3 * Math.exp(-(((y - hy - 150) / 90) ** 2)));
-    let land = x < shore;
-    // A little islet offshore
-    if (!land && dist(x, y, hx + w * 8.2, hy - K_HEX * 7) < K_HEX * (1.2 + fbm(x * 0.02, y * 0.02, seed, 2))) land = true;
-    KT[i] = land ? 1 : 0;
+    const [wx, wy] = k2w(KG.cx[i], KG.cy[i]), w = WG.at(wx, wy);
+    KT[i] = w >= 0 && S.world.terrain[w] !== T.WATER ? 1 : 0;
   }
   KT[HALL_HEX] = 1;
   KG.neighbors(HALL_HEX).forEach((n) => { KT[n] = 1; });
   KDEPTH = KG.distanceField((i) => KT[i] === 1, 6);
   KCLEARED = new Set(S.cleared);
 }
-
+// Older saves had a fixed east coast; move buildings that now sit on water.
+function relocateStrandedBuildings() {
+  for (const b of S.buildings) {
+    if (b.type === 'hall' || (KT[b.hex] === 1 && (!BUILDINGS[b.type].coastal || isCoastal(b.hex)))) continue;
+    const old = b.hex; b.hex = -1;
+    const spot = KG.within(HALL_HEX, landRadius()).filter((i) => !placementError(b.type, i)).sort((x, y) => KG.dist(x, old) - KG.dist(y, old))[0];
+    if (spot != null) b.hex = spot; else { b.hex = old; }
+  }
+}
 const hallLevel = () => (S.buildings.find((b) => b.type === 'hall') || { level: 1 }).level;
 const R = (id) => (S.research && S.research[id]) || 0;
 const countOf = (type) => S.buildings.filter((b) => b.type === type).length;

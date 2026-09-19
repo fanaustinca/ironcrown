@@ -109,15 +109,13 @@ function showBoxOpening(box, reward) {
 }
 
 /* ---------- view / tab ---------- */
+// One map: "views" are just camera flights — into your city, or out to the world.
 function setView(v) {
-  UI.view = v;
-  document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
-  if (v === 'world') { UI.placing = null; updatePlacingHint(); UI.fx.length = 0; }
-  UI.hover = -1; el('tooltip').hidden = true;
-  el('minimap').hidden = v !== 'world' || !SETTINGS.minimap;
+  if (v === 'kingdom') { CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.z = Math.max(CAM.z, 5.5); CAM.clamp(); setTab('info'); }
+  else { CAM.z = Math.min(CAM.z, 1.1); CAM.clamp(); if (UI.tab === 'info' && !UI.selected) setTab('map'); }
   UI.lastPanelHtml = ''; UI.panelDirty = true;
-  if (S) renderPanel(true);
 }
+function flyToCity() { if (cityAlpha() < 0.95) { CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.z = Math.max(CAM.z, 5.5); CAM.clamp(); } }
 function setTab(t) {
   UI.tab = t;
   document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
@@ -133,17 +131,16 @@ function selectEntity(kind, id) {
   UI.selEntity = { kind, id };
   const e = selectedEntity();
   if (!e) return;
-  if (UI.view !== 'world') setView('world');
-  CAM.world.centerOn(e.at);
-  setTab('info');
+  CAM.centerOn(e.at); if (CAM.z > 3) CAM.z = 2.2; CAM.clamp();
+  setTab('map');
 }
 
 /* ---------- actions ---------- */
 const findEnt = (arg) => { const [k, id] = arg.split(':'); return (k === 'division' ? S.divisions : k === 'scout' ? S.scouts : S.fleets).find((e) => e.id === id); };
 const ACTIONS = {
-  place(t) { const l = buildLockReason(t); if (l) return toast(l, 'bad'); setView('kingdom'); setTab('info'); UI.placing = t; UI.selected = null; updatePlacingHint(); },
+  place(t) { const l = buildLockReason(t); if (l) return toast(l, 'bad'); flyToCity(); setTab('info'); UI.placing = t; UI.selected = null; updatePlacingHint(); },
   'cancel-place'() { UI.placing = null; updatePlacingHint(); },
-  select(id) { UI.selected = +id; setView('kingdom'); setTab('info'); },
+  select(id) { UI.selected = +id; flyToCity(); setTab('info'); },
   deselect() { UI.selected = null; UI.selHex = -1; },
   upgrade(id) { upgradeBuilding(S.buildings.find((b) => b.id === +id)); },
   demolish(id) { showModal(`<h2>Demolish?</h2><p>You will get 40% of its cost back.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Demolish', 'demolish-yes', id, { cls: 'red' })}</div>`); },
@@ -161,9 +158,9 @@ const ACTIONS = {
     else { if (!pay({ gold: Math.round(100 * (2.2 - 0.15 * port.level - 0.1 * R('trade'))) })) return toast('Not enough gold', 'bad'); gain({ [r]: 100 }); }
   },
   'world-deselect'() { UI.worldSel = -1; },
-  'focus-kingdom'(kid) { const k = S.kingdoms[+kid]; UI.worldSel = k.capital; setView('world'); CAM.world.centerOn(k.capital); setTab('info'); },
-  'focus-hex'(i) { UI.worldSel = +i; setView('world'); CAM.world.centerOn(+i); setTab('info'); },
-  'focus-entity'() { const e = selectedEntity(); if (e) CAM.world.centerOn(e.at); },
+  'focus-kingdom'(kid) { const k = S.kingdoms[+kid]; UI.worldSel = k.capital; CAM.centerOn(k.capital); setTab('map'); },
+  'focus-hex'(i) { UI.worldSel = +i; CAM.centerOn(+i); if (CAM.z > 3) CAM.z = 2.2; CAM.clamp(); setTab('map'); },
+  'focus-entity'() { const e = selectedEntity(); if (e) CAM.centerOn(e.at); },
   'select-entity'(arg) { const [k, id] = arg.split(':'); selectEntity(k, id); },
   'deselect-entity'() { UI.selEntity = null; },
   claim(i) { claimTile(+i); },
@@ -181,7 +178,7 @@ const ACTIONS = {
   'b-form'(arg) { const [id, gi, f] = arg.split(':'); const b = Battles.get(+id); if (b) Battles.setFormation(b, +gi, f); renderBattleHud(); },
   'b-stance'(arg) { const [id, gi, st] = arg.split(':'); const b = Battles.get(+id); if (b) Battles.setStance(b, +gi, st); renderBattleHud(); },
   'b-resolve'(id) { Battles.resolve(+id); },
-  'b-focus'(id) { const b = Battles.get(+id); if (b) { Battles.focus = b.id; setView('world'); Battles.focusCam(b); } },
+  'b-focus'(id) { const b = Battles.get(+id); if (b) { Battles.focus = b.id; Battles.focusCam(b); } },
   'b-tab'(id) { Battles.focus = +id; renderBattleHud(); },
   order(kind) { issueOrder(selectedEntity(), kind, UI.worldSel); },
   return(arg) { const e = findEnt(arg); if (e) giveOrder(e, 'return', isFleet(e) ? S.world.harbor : S.world.capital); },
@@ -193,6 +190,24 @@ const ACTIONS = {
   },
   'form-fleet'() { showFormFleet(); },
   'fleet-yes'() { const f = createFleet(el('fleet-name').value, readSliders('fl'), el('fleet-general').value || null); if (f) { closeModal(); toast(`⚓ ${f.name} formed`, 'good'); } },
+  'edit-troops'(id) {
+    const d = S.divisions.find((x) => x.id === id);
+    const pool = {}; for (const u of Object.keys(UNITS)) if (u !== 'seaman' && (d.units[u] || S.army[u])) pool[u] = (d.units[u] || 0) + (S.army[u] || 0);
+    showModal(`<h2>🎚️ ${esc(d.name)} — troops</h2><p class="small muted">Drag to set exactly how many of each soldier this division has. Extra soldiers go back to (or come from) the capital garrison.</p>
+      ${Object.keys(pool).map((u) => `<div class="row slider-row"><span style="width:26px">${UNITS[u].icon}</span><span style="width:84px">${UNITS[u].name}</span><input type="range" min="0" max="${pool[u]}" value="${d.units[u] || 0}" data-ed="${u}" /><b id="ed-${u}" style="width:70px;text-align:right">${d.units[u] || 0}/${pool[u]}</b></div>`).join('')}
+      <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Apply', 'edit-troops-yes', id, { id: 'edit-yes' })}</div>`);
+  },
+  'edit-troops-yes'(id) { if (setDivisionTroops(S.divisions.find((x) => x.id === id), readSliders('ed'))) { closeModal(); toast('Division updated', 'good'); } },
+  split(id) {
+    const d = S.divisions.find((x) => x.id === id);
+    showModal(`<h2>✂️ Split ${esc(d.name)}</h2><p class="small muted">Choose which soldiers form the new division. It needs its own general.</p>
+      <input type="text" id="split-name" value="${esc(d.name)} II" maxlength="24" />
+      ${Object.keys(d.units).filter((u) => d.units[u] > 0).map((u) => `<div class="row slider-row"><span style="width:26px">${UNITS[u].icon}</span><span style="width:84px">${UNITS[u].name}</span><input type="range" min="0" max="${d.units[u]}" value="${Math.floor(d.units[u] / 2)}" data-sp="${u}" /><b id="sp-${u}" style="width:70px;text-align:right">${Math.floor(d.units[u] / 2)}/${d.units[u]}</b></div>`).join('')}
+      <h3>General</h3>${generalSelect('split-general')}
+      <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Split', 'split-yes', id, { id: 'split-yes' })}</div>`);
+  },
+  'split-yes'(id) { const nd = splitDivision(S.divisions.find((x) => x.id === id), readSliders('sp'), el('split-name').value, el('split-general').value || null); if (nd) { closeModal(); toast(`✂️ ${nd.name} formed`, 'good'); } },
+  merge(arg) { const [a, b] = arg.split(':'); mergeDivisions(S.divisions.find((x) => x.id === a), S.divisions.find((x) => x.id === b)); },
   reinforce(id) {
     const d = S.divisions.find((x) => x.id === id);
     showModal(`<h2>➕ Reinforce ${esc(d.name)}</h2>${sliderRows(S.army, UNITS, 'rf', 'none')}<div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reinforce', 'reinforce-yes', id)}</div>`);
@@ -233,22 +248,22 @@ const ACTIONS = {
   },
   reset() { showModal(`<h2>Reset everything?</h2><p>Your kingdom will be lost forever.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reset', 'reset-yes', '', { cls: 'red' })}</div>`); },
   'reset-yes'() { storage.del(SAVE_KEY); newGame(); fogDirty = true; resetView(); showWelcome(); },
-  'zoom-in'() { const c = CAM[UI.view]; c.zoomAt(CW / 2, CH / 2, 1.25); },
-  'zoom-out'() { const c = CAM[UI.view]; c.zoomAt(CW / 2, CH / 2, 0.8); },
-  'zoom-home'() { if (UI.view === 'world') { CAM.world.z = 1; CAM.world.centerOn(S.world.capital); } else { CAM.kingdom.z = 1; CAM.kingdom.centerOn(HALL_HEX); } },
+  'zoom-in'() { CAM.zoomAt(CW / 2, CH / 2, 1.3); },
+  'zoom-out'() { CAM.zoomAt(CW / 2, CH / 2, 0.77); },
+  'zoom-home'() { CAM.centerOn(S.world.capital); },
 };
 function issueOrder(e, kind, i) {
   if (!e || i < 0) return;
   const extra = {};
   if (kind === 'blockade') { const k = S.kingdoms[S.world.owner[i]]; return giveOrder(e, 'blockade', k.capital, { kid: k.id }) && toast(`⚓ ${e.name} sails to blockade ${k.name}`); }
   if (kind === 'hunt') extra.target = (S.aiFleets.find((x) => x.at === i) || {}).id;
-  if (kind === 'intercept') extra.target = (S.aiArmies.find((x) => x.at === i) || {}).id;
+  if (kind === 'attack-army') extra.target = (S.aiArmies.find((x) => x.at === i) || {}).id;
   if (giveOrder(e, kind, i, extra) && e.path.length) toast(`${isScout(e) ? '🔭' : isFleet(e) ? '⚓' : '⚔️'} ${e.name}: ${kind === 'move' ? 'moving' : kind} → ${hexName(i)} (ETA ${fmtTime(etaOf(e))})`);
 }
 function resetView() {
   UI.selected = null; UI.placing = null; UI.worldSel = -1; UI.selEntity = null; UI.selHex = -1;
-  CAM.kingdom.z = 1.15; CAM.kingdom.centerOn(HALL_HEX); CAM.world.z = 1; CAM.world.centerOn(S.world.capital);
-  setView('kingdom'); setTab('info');
+  CAM.z = 5.5; CAM.centerOn(S.world.capital);
+  setTab('info');
 }
 
 /* ---------- input ---------- */
@@ -268,7 +283,7 @@ function bindInput() {
   window.addEventListener('pointerup', () => setTimeout(() => { UI.pointerDown = false; }, 0));
   document.addEventListener('input', (e) => {
     const d = e.target.dataset;
-    for (const p of ['mu', 'fl', 'rf']) if (d[p] !== undefined) el(`${p}-${d[p]}`).textContent = `${e.target.value}/${e.target.max}`;
+    for (const p of ['mu', 'fl', 'rf', 'ed', 'sp']) if (d[p] !== undefined) el(`${p}-${d[p]}`).textContent = `${e.target.value}/${e.target.max}`;
     if (e.target.id === 'alliance-name' && UI.allianceDraft) UI.allianceDraft.name = e.target.value;
   });
   document.addEventListener('change', (e) => {
@@ -277,7 +292,7 @@ function bindInput() {
       const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
       SETTINGS[d.setting] = d.setting === 'zoomSpeed' ? +v : v;
       saveSettings();
-      if (d.setting === 'minimap') el('minimap').hidden = UI.view !== 'world' || !SETTINGS.minimap;
+      if (d.setting === 'minimap') el('minimap').hidden = !SETTINGS.minimap;
     }
     if (d.assign) { const [k, id] = e.target.value.split(':'); assignGeneral(d.assign, k, id); UI.panelDirty = true; e.target.blur(); renderPanel(true); }
     if (d.divgen) {
@@ -318,7 +333,7 @@ function bindInput() {
   const pointers = new Map();
   let drag = null, pinchDist = 0, lastPaint = -1;
   const local = (e) => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const hexAt = (p) => { const cam = CAM[UI.view]; const [wx, wy] = cam.toWorld(p.x, p.y); return (UI.view === 'world' ? WG : KG).at(wx, wy); };
+  const hexAt = (p) => { const [wx, wy] = CAM.toWorld(p.x, p.y); return WG.at(wx, wy); };
   const canDragPan = () => SETTINGS.panMode !== 'keys';
   cv.addEventListener('pointerdown', (e) => {
     cv.setPointerCapture(e.pointerId);
@@ -326,7 +341,7 @@ function bindInput() {
     pointers.set(e.pointerId, p);
     if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinchDist = dist(a.x, a.y, b.x, b.y); drag = null; return; }
     drag = { x: p.x, y: p.y, sx: p.x, sy: p.y, moved: false, button: e.button, paint: UI.placing === 'wall' && e.button === 0 };
-    if (drag.paint) { const i = hexAt(p); if (placeBuilding('wall', i)) lastPaint = i; if (buildLockReason('wall')) { UI.placing = null; updatePlacingHint(); } }
+    if (drag.paint) { const i = cityHexAt(p); if (placeBuilding('wall', i)) lastPaint = i; if (buildLockReason('wall')) { UI.placing = null; updatePlacingHint(); } }
   });
   cv.addEventListener('pointermove', (e) => {
     const p = local(e);
@@ -334,19 +349,20 @@ function bindInput() {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, p);
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()], d = dist(a.x, a.y, b.x, b.y);
-      if (pinchDist) CAM[UI.view].zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
+      if (pinchDist) CAM.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
       pinchDist = d;
       return;
     }
     UI.hover = hexAt(p);
+    UI.khover = cityHexAt(p);
     if (drag) {
       if (drag.paint) {
-        const i = UI.hover;
+        const i = UI.khover;
         if (i !== lastPaint && UI.placing === 'wall' && !placementError('wall', i) && !buildLockReason('wall')) { placeBuilding('wall', i); lastPaint = i; }
       } else if (dist(p.x, p.y, drag.sx, drag.sy) > 6 && (canDragPan() || e.pointerType === 'touch')) {
         drag.moved = true;
         const inv = SETTINGS.invertDrag ? -1 : 1;
-        CAM[UI.view].pan((p.x - drag.x) * inv, (p.y - drag.y) * inv);
+        CAM.pan((p.x - drag.x) * inv, (p.y - drag.y) * inv);
         cv.style.cursor = 'grabbing';
       }
       drag.x = p.x; drag.y = p.y;
@@ -363,13 +379,13 @@ function bindInput() {
   };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); drag = null; });
-  cv.addEventListener('pointerleave', () => { mouse.inside = false; UI.hover = -1; el('tooltip').hidden = true; });
-  cv.addEventListener('wheel', (e) => { e.preventDefault(); const p = local(e); CAM[UI.view].zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015 * SETTINGS.zoomSpeed)); }, { passive: false });
+  cv.addEventListener('pointerleave', () => { mouse.inside = false; UI.hover = -1; UI.khover = -1; el('tooltip').hidden = true; });
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); const p = local(e); CAM.zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015 * SETTINGS.zoomSpeed)); }, { passive: false });
   cv.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // minimap: click / drag to jump
   const mm = el('minimap');
-  const mmMove = (e) => { const r = mm.getBoundingClientRect(); CAM.world.x = ((e.clientX - r.left) / r.width) * WG.pw; CAM.world.y = ((e.clientY - r.top) / r.height) * WG.ph; CAM.world.clamp(); };
+  const mmMove = (e) => { const r = mm.getBoundingClientRect(); CAM.x = ((e.clientX - r.left) / r.width) * WG.pw; CAM.y = ((e.clientY - r.top) / r.height) * WG.ph; CAM.clamp(); };
   mm.addEventListener('pointerdown', (e) => { mm.setPointerCapture(e.pointerId); mmMove(e); mm.dataset.drag = '1'; });
   mm.addEventListener('pointermove', (e) => { if (mm.dataset.drag) mmMove(e); });
   mm.addEventListener('pointerup', () => { delete mm.dataset.drag; });
@@ -378,42 +394,49 @@ function bindInput() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('beforeunload', save);
 }
+// Kingdom hex under the cursor while the city is visible (else -1).
+function cityHexAt(p) {
+  if (cityAlpha() < 0.3) return -1;
+  const [wx, wy] = CAM.toWorld(p.x, p.y), [kx, ky] = w2k(wx, wy), i = KG.at(kx, ky);
+  return i >= 0 && KG.dist(i, HALL_HEX) <= landRadius() + 1 ? i : -1;
+}
 function handleClick(p, button) {
-  const cam = CAM[UI.view], [wx, wy] = cam.toWorld(p.x, p.y);
-  if (UI.view === 'kingdom') {
-    const i = KG.at(wx, wy);
-    if (UI.placing) {
-      const type = UI.placing;
-      if (placeBuilding(type, i) && (type !== 'wall' || buildLockReason('wall'))) { UI.placing = null; updatePlacingHint(); }
-    } else if (button === 0) {
-      const b = buildingAt(i);
-      UI.selected = b ? b.id : null;
-      UI.selHex = !b && obstacleAt(i) ? i : -1;
-      if (b || UI.selHex >= 0) setTab('info');
-    } else { UI.selected = null; UI.selHex = -1; }
-  } else {
-    const i = WG.at(wx, wy);
-    // did we click one of our banners/ships?
-    const hit = S.divisions.filter((d) => d.status !== 'fighting').concat(S.fleets, S.scouts).map((e) => { const [x, y] = entPos(e); const [sx, sy] = cam.toScreen(x, y - 8); return [e, dist(sx, sy, p.x, p.y)]; }).filter(([, d]) => d < 22).sort((a, b) => a[1] - b[1])[0];
-    const sel = selectedEntity();
-    const kindOf = (e) => (isScout(e) ? 'scout' : isFleet(e) ? 'fleet' : 'division');
-    if (button === 0 && sel && isScout(sel) && i >= 0 && (!hit || hit[0] === sel)) {
-      UI.worldSel = i;
-      if (i !== sel.at) issueOrder(sel, 'move', i);
-    } else if (button === 2 && sel && i >= 0) {
-      const o = ordersFor(sel, i), best = o.find(([k]) => k !== 'move') || o[0];
-      UI.worldSel = i;
-      if (best) issueOrder(sel, best[0], i); else toast('No valid order for that hex', 'bad');
-    } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; setTab('info'); }
-    else if (button === 0) { UI.worldSel = i; setTab('info'); }
+  const [wx, wy] = CAM.toWorld(p.x, p.y);
+  const k = cityHexAt(p);
+  if (UI.placing) {
+    const type = UI.placing;
+    if (k < 0) { toast('Zoom into your city and click a hex inside the golden border', 'bad'); return; }
+    if (placeBuilding(type, k) && (type !== 'wall' || buildLockReason('wall'))) { UI.placing = null; updatePlacingHint(); }
+    return renderPanel(true);
   }
+  const i = WG.at(wx, wy), sel = selectedEntity();
+  const hit = S.divisions.filter((d) => d.status !== 'fighting').concat(S.fleets, S.scouts).map((e) => { const [x, y] = entPos(e); const [sx, sy] = CAM.toScreen(x, y - 8); return [e, dist(sx, sy, p.x, p.y)]; }).filter(([, d]) => d < 22).sort((a, b) => a[1] - b[1])[0];
+  const kindOf = (e) => (isScout(e) ? 'scout' : isFleet(e) ? 'fleet' : 'division');
+  // city clicks: buildings, obstacles, empty land
+  if (k >= 0 && button === 0 && !hit && !(sel && !isScout(sel) && k >= 0 && !inLand(k))) {
+    const b = buildingAt(k);
+    if (b || (obstacleAt(k) && inLand(k)) || inLand(k)) {
+      UI.selected = b ? b.id : null;
+      UI.selHex = !b && obstacleAt(k) ? k : -1;
+      setTab('info');
+      return renderPanel(true);
+    }
+  }
+  if (button === 0 && sel && isScout(sel) && i >= 0 && (!hit || hit[0] === sel)) { UI.worldSel = i; if (i !== sel.at) issueOrder(sel, 'move', i); }
+  else if (button === 2 && sel && i >= 0) {
+    const o = ordersFor(sel, i), best = o.find(([kk]) => kk !== 'move') || o[0];
+    UI.worldSel = i;
+    if (best) issueOrder(sel, best[0], i); else toast('No valid order for that hex', 'bad');
+  } else if (hit && button === 0) { UI.selEntity = { kind: kindOf(hit[0]), id: hit[0].id }; setTab('map'); }
+  else if (button === 0) { UI.worldSel = i; UI.selected = null; setTab('map'); }
   renderPanel(true);
 }
 function updateTooltip(p) {
-  const i = UI.hover, tip = el('tooltip');
+  const i = UI.hover, tip = el('tooltip'), ki = UI.khover;
   let html = null;
-  if (i >= 0 && UI.view === 'kingdom') {
-    const b = buildingAt(i), o = obstacleAt(i);
+  if (ki >= 0 && (inLand(ki) || UI.placing)) {
+    const b = buildingAt(ki), o = obstacleAt(ki);
+    const i = ki;
     if (b && !UI.placing) html = `<b>${BUILDINGS[b.type].name}</b> · level ${b.level}${b.build > 0 ? `<br>🔨 ${fmtTime(b.build)}` : ''}${b.research ? `<br>🎓 ${RESEARCH[b.research.id].name}` : ''}`;
     else if (o && !UI.placing) html = `<b>${o === 'tree' ? 'Trees' : 'Rocks'}</b><br>Click to clear`;
     else if (UI.placing) { const err = placementError(UI.placing, i); html = err ? `⛔ ${esc(err)}` : `✅ Build ${BUILDINGS[UI.placing].name} here`; }
@@ -430,7 +453,7 @@ function updateTooltip(p) {
 // Keyboard / edge scrolling, applied every frame.
 function inputFrame(dt) {
   if (!el('modal').hidden) return;
-  const cam = CAM[UI.view], sp = 700 * dt;
+  const cam = CAM, sp = 700 * dt;
   let dx = 0, dy = 0;
   if (SETTINGS.panMode !== 'drag') {
     if (keysDown.has('a') || keysDown.has('arrowleft')) dx += sp;

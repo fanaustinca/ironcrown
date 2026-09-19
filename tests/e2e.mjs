@@ -93,7 +93,7 @@ await test('loads, shows the welcome screen, version label and starts', async ()
   assert((await page.textContent('#kingdom-name')) === 'Testoria', 'name in HUD');
 });
 
-await test('kingdom renders as a hex map with a hexagonal land border', async () => {
+await test('one map: the city is drawn on the world map at the capital', async () => {
   await page.waitForTimeout(500);
   assert((await canvasRichness('#stage')) > 70, 'detailed canvas');
   const s = await state();
@@ -101,6 +101,14 @@ await test('kingdom renders as a hex map with a hexagonal land border', async ()
   const land = await G(() => { const d = window.ironcrown.debug; return d.KG.within(d.HALL_HEX, 4).length; });
   assert(land === 61, `hexagonal land of radius 4 has 61 hexes (got ${land})`);
   await shot('02-kingdom');
+  const inCity = await G(() => cityAlpha());
+  await page.click('[data-view="world"]');
+  await page.waitForTimeout(300);
+  const out = await G(() => ({ ca: cityAlpha(), z: window.ironcrown.CAM.z }));
+  assert(inCity > 0.9 && out.ca < 0.1, `zooming out fades the city into the world map (${inCity} → ${out.ca})`);
+  await shot('02b-world-same-map');
+  await page.click('[data-view="kingdom"]');
+  assert((await G(() => cityAlpha())) > 0.9, 'City button flies back into the city');
 });
 
 await test('resources accumulate in real time', async () => {
@@ -110,12 +118,12 @@ await test('resources accumulate in real time', async () => {
 });
 
 await test('camera: drag pans, wheel zooms, buttons recenter', async () => {
-  const c0 = await G(() => ({ ...window.ironcrown.CAM.kingdom }));
+  const c0 = await G(() => ({ ...window.ironcrown.CAM }));
   await page.mouse.move(500, 500); await page.mouse.down(); await page.mouse.move(360, 420, { steps: 8 }); await page.mouse.up();
-  const c1 = await G(() => ({ ...window.ironcrown.CAM.kingdom }));
-  assert(Math.abs(c1.x - c0.x) > 40 && Math.abs(c1.y - c0.y) > 20, `drag moved the camera (${c0.x.toFixed(0)},${c0.y.toFixed(0)} → ${c1.x.toFixed(0)},${c1.y.toFixed(0)})`);
+  const c1 = await G(() => ({ ...window.ironcrown.CAM }));
+  assert(Math.abs(c1.x - c0.x) * c1.z > 100 && Math.abs(c1.y - c0.y) * c1.z > 50, `drag moved the camera (${c0.x.toFixed(0)},${c0.y.toFixed(0)} → ${c1.x.toFixed(0)},${c1.y.toFixed(0)})`);
   await page.mouse.move(500, 500); await page.mouse.wheel(0, -400); await page.waitForTimeout(100);
-  assert((await G(() => window.ironcrown.CAM.kingdom.z)) > c1.z, 'wheel zooms in');
+  assert((await G(() => window.ironcrown.CAM.z)) > c1.z, 'wheel zooms in');
   await page.click('[data-action="zoom-home"]');
 });
 
@@ -123,11 +131,11 @@ await test('settings: keyboard camera mode disables drag and enables WASD', asyn
   await page.click('.hud-stats [data-action="settings"]');
   await page.selectOption('[data-setting="panMode"]', 'keys');
   await page.keyboard.press('Escape');
-  const x0 = await G(() => window.ironcrown.CAM.kingdom.x);
+  const x0 = await G(() => window.ironcrown.CAM.x);
   await page.mouse.move(500, 500); await page.mouse.down(); await page.mouse.move(300, 500, { steps: 6 }); await page.mouse.up();
-  assert(Math.abs((await G(() => window.ironcrown.CAM.kingdom.x)) - x0) < 1, 'drag no longer pans in keyboard mode');
+  assert(Math.abs((await G(() => window.ironcrown.CAM.x)) - x0) < 1, 'drag no longer pans in keyboard mode');
   await page.keyboard.down('d'); await page.waitForTimeout(350); await page.keyboard.up('d');
-  assert(Math.abs((await G(() => window.ironcrown.CAM.kingdom.x)) - x0) > 20, 'D key pans');
+  assert(Math.abs((await G(() => window.ironcrown.CAM.x)) - x0) > 20, 'D key pans');
   await page.click('.hud-stats [data-action="settings"]');
   await page.selectOption('[data-setting="panMode"]', 'drag');
   await shot('03-settings');
@@ -232,14 +240,39 @@ await test('generals: one per division, tavern hire, copies & promotion', async 
   await shot('06-generals');
 });
 
+await test('no army cap; edit, split and merge divisions', async () => {
+  await G(() => window.ironcrown.debug.give({ gold: 90000, food: 90000, iron: 90000 }));
+  await page.click('[data-tab="army"]');
+  for (let k = 0; k < 6; k++) { await page.click('[data-action="train"][data-arg="swordsman:5"]'); await page.click('[data-action="train"][data-arg="archer:5"]'); }
+  await ff(300);
+  const s0 = await state();
+  const over = await G(() => totalHousing() > armyCap());
+  assert(s0.army.swordsman >= 30 && over, `trained past the old housing cap (${s0.army.swordsman} swordsmen)`);
+  const d = s0.divisions.find((x) => x.name === 'Test Legion');
+  await page.click(`[data-action="edit-troops"][data-arg="${d.id}"]`);
+  await page.$eval('input[data-ed="swordsman"]', (e) => { e.value = 20; e.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.click('#edit-yes');
+  const s1 = await state();
+  assert(s1.divisions.find((x) => x.id === d.id).units.swordsman === 20, 'division resized to 20 swordsmen');
+  await G(() => cheats.generals(1));
+  await page.click(`[data-action="split"][data-arg="${d.id}"]`);
+  await page.click('#split-yes');
+  const s2 = await state();
+  const nd = s2.divisions.find((x) => x.name === 'Test Legion II');
+  assert(nd && nd.general && nd.general !== s2.divisions.find((x) => x.id === d.id).general, 'split into a new division with its own general');
+  const before = s2.divisions.length;
+  await page.click(`[data-action="merge"][data-arg="${d.id}:${nd.id}"]`);
+  assert((await state()).divisions.length === before - 1, 'merged back together');
+});
+
 await test('world map: hex terrain, fog, minimap, select a division and march', async () => {
   await page.click('[data-view="world"]');
   await page.waitForTimeout(300);
   assert((await canvasRichness('#stage')) > 40, 'world drawn');
+  await page.click('[data-tab="army"]');
   assert(await page.isVisible('#minimap'), 'minimap visible');
   const s = await state();
   const d = s.divisions.find((x) => x.name === 'Test Legion');
-  await page.click('[data-tab="army"]');
   await page.click(`[data-action="select-entity"][data-arg="division:${d.id}"]`);
   const target = await G((cap) => { const W = window.ironcrown.debug.WG; return W.within(cap, 3).find((i) => W.dist(i, cap) >= 2 && isPassable(i) && isSeen(i) && (findPath(W, cap, i, aiLandCost) || []).length <= 4); }, s.world.capital);
   assert(target !== undefined, 'a reachable hex nearby');
@@ -372,6 +405,41 @@ await test('battle is fought on the map with formations and stances', async () =
   assert(await G(() => window.ironcrown.Battles.list.length) === 0, 'battlefield cleared');
 });
 
+await test('coalition battles: nearby divisions fight together; 3-way battles', async () => {
+  await G(() => { window.ironcrown.SETTINGS.battleMode = 'auto'; cheats.army(60); cheats.generals(2); });
+  const res = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    s.divisions = s.divisions.slice(0, 1);
+    const k = s.kingdoms.find((k) => canReachCapital(k));
+    const hex = W.neighbors(s.world.capital).find((i) => isPassable(i) && !W.neighbors(i).includes(k.capital));
+    const a = createDivision('Left Wing', { swordsman: 20, archer: 20 }, idleGenerals()[0].uid);
+    const b = createDivision('Right Wing', { pikeman: 20, horseman: 10 }, idleGenerals()[0].uid);
+    // put both next to each other and bring an enemy army and a pirate-like third party (bandits) into the fight
+    a.at = hex; b.at = W.neighbors(hex).find((i) => isPassable(i)) ?? hex;
+    k.atWar = true; k.relation = -80;
+    const army = { id: 'test-army', kid: k.id, kind: 'war', units: { swordsman: 25, archer: 15, pikeman: 0, horseman: 5, catapult: 0, scout: 0, seaman: 0 }, hall: 2, at: hex, path: [], prog: 0, target: hex, status: 'idle' };
+    s.aiArmies.push(army);
+    let seen = null;
+    const orig = Battles.create.bind(Battles);
+    Battles.create = (cfg) => { const bt = orig(cfg); seen = seen || { teams: bt.teams.map((t) => [t.id, t.groups.map((g) => g.name)]) }; return bt; };
+    gatherBattle(hex, ['P', teamOfKingdom(k)], { kind: 'land', title: 'test', extra: [bandits(hex, 150, 1)] });
+    Battles.create = orig;
+    return seen;
+  });
+  assert(res, 'a battle was created');
+  const P = res.teams.find((t) => t[0] === 'P');
+  assert(P && P[1].includes('Left Wing') && P[1].includes('Right Wing'), `both divisions fought together (${JSON.stringify(res.teams)})`);
+  assert(res.teams.length >= 3 && res.teams.some((t) => t[0] === 'B'), '3-way battle with a third party');
+});
+
+await test('AI kingdoms field guard armies and navy patrols', async () => {
+  await ff(200);
+  const s = await state();
+  assert(s.aiArmies.some((a) => a.kind === 'guard'), 'guard armies on AI land');
+  const coastal = s.kingdoms.filter((k) => k.coastal).length;
+  assert(!coastal || s.aiFleets.some((f) => f.patrol), 'coastal kingdoms keep navy patrols');
+});
+
 await test('graphics quality: high textures ↔ low-poly switch live', async () => {
   await page.click('.hud-stats [data-action="settings"]');
   await page.selectOption('[data-setting="graphics"]', 'low');
@@ -409,6 +477,7 @@ await test('diplomacy: gift and declare war', async () => {
   await page.keyboard.press('Escape');
   await page.click('[data-tab="info"]');
   await page.click('[data-view="world"]');
+  await page.click('[data-tab="map"]');
   await page.click('[data-action="focus-kingdom"][data-arg="1"]');
   await page.click(`[data-action="diplo"][data-arg="gift:${k0.id}"]`);
   const k1 = (await state()).kingdoms[1];

@@ -38,14 +38,14 @@ class Camera {
   }
   key() { return `${this.x.toFixed(1)},${this.y.toFixed(1)},${this.z.toFixed(3)},${CW},${CH}`; }
 }
-const CAM = { kingdom: new Camera(KG, 0.45, 2.6), world: new Camera(WG, 0.3, 2.6) };
+const CAM = new Camera(WG, 0.3, 9);   // one camera for the one map
 
 function resize() {
   const r = cv.getBoundingClientRect();
   DPR = Math.min(window.devicePixelRatio || 1, 2);
   CW = Math.max(200, r.width); CH = Math.max(200, r.height);
   cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR);
-  CAM.kingdom.clamp(); CAM.world.clamp();
+  CAM.clamp();
 }
 
 /* ---------- organic coastline ----------
@@ -141,7 +141,7 @@ function drawBuilding(g, b, px, py, s, t, ghost) {
       if (lvl >= 2) { g.fillStyle = '#f2c14e'; g.fillRect(px + s * 0.24, py + s * 0.62, s * 0.52, 2); }
       if (lvl >= 4) for (const cx of [0.3, 0.7]) { g.fillStyle = '#b5452f'; g.fillRect(px + s * cx - 3, py + s * 0.52, 6, s * 0.12); }
       if (lvl >= 6) { g.fillStyle = '#f2c14e'; for (let i = 0; i < 5; i++) g.fillRect(px + s * (0.3 + i * 0.1), py + s * 0.13, 3, 5); }
-      flag(g, px + s / 2, py + s * 0.02, s * 0.26, '#f2c14e', t);
+      flag(g, px + s / 2, py + s * 0.02, s * 0.26, b.color || '#f2c14e', t);
       break;
     }
     case 'goldmine': case 'ironmine': case 'diamondmine': {
@@ -200,8 +200,8 @@ function drawBuilding(g, b, px, py, s, t, ghost) {
       const cx = KG.cx[i], cy = KG.cy[i];
       g.lineCap = 'butt';
       for (let d = 0; d < 6; d++) {
-        const n = KG.nb[i * 6 + d], nbB = n >= 0 && S.buildings.find((x) => x.hex === n);
-        if (!nbB || nbB.type !== 'wall') continue;
+        const n = KG.nb[i * 6 + d];
+        if (n < 0 || !(b.wallSet ? b.wallSet.has(n) : (S.buildings.find((x) => x.hex === n) || {}).type === 'wall')) continue;
         const mx = (cx + KG.cx[n]) / 2, my = (cy + KG.cy[n]) / 2;
         g.strokeStyle = c2; g.lineWidth = s * 0.26; g.beginPath(); g.moveTo(cx, cy + s * 0.05); g.lineTo(mx, my + s * 0.05); g.stroke();
         g.strokeStyle = c1; g.lineWidth = s * 0.26; g.beginPath(); g.moveTo(cx, cy - h * 0.7); g.lineTo(mx, my - h * 0.7); g.stroke();
@@ -240,7 +240,7 @@ function drawBuilding(g, b, px, py, s, t, ghost) {
       break;
     }
     case 'port': {
-      const dir = waterDir(b.hex);
+      const dir = b.color ? 0 : waterDir(b.hex);
       g.save(); g.translate(px + s / 2, py + s / 2); g.rotate(dir);
       g.fillStyle = '#7b5230'; g.fillRect(-s * 0.1, -s * 0.16, s * 1.05, s * 0.32);
       g.fillStyle = '#a0703f'; for (let i = 0; i < 6; i++) g.fillRect(-s * 0.08 + i * s * 0.17, -s * 0.16, s * 0.14, s * 0.3);

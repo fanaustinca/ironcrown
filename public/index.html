@@ -18,8 +18,8 @@
         <span class="chip" title="Season · day · year">📅 <b id="calendar">—</b></span>
         <span class="chip" title="Builders busy / total">🔨 <b id="builders">0/2</b></span>
         <span class="chip" title="Universities researching / total">🎓 <b id="research-chip">—</b></span>
-        <span class="chip" title="Troops (all) / housing capacity">🛡️ <b id="army-cap">0/25</b></span>
-        <span class="chip" title="Ships / naval capacity">⚓ <b id="fleet-cap">0/4</b></span>
+        <span class="chip" title="Troops (all)">🛡️ <b id="army-cap">0</b></span>
+        <span class="chip" title="Ships (all)">⚓ <b id="fleet-cap">0</b></span>
         <span class="chip" title="Total power">⚡ <b id="power">0</b></span>
         <span class="chip" id="shield-chip" hidden title="Peace shield active">🕊️ <b id="shield-time"></b></span>
         <span class="chip sync" id="sync" title="Save status">💾 <b id="sync-label">local</b></span>
@@ -33,8 +33,8 @@
       <!-- ===== Map stage ===== -->
       <section id="stage-wrap">
         <div class="view-toggle" role="tablist">
-          <button class="active" data-view="kingdom" role="tab" title="Kingdom (K)">🏰 Kingdom</button>
-          <button data-view="world" role="tab" title="World map (M)">🗺️ World</button>
+          <button class="active" data-view="kingdom" role="tab" title="Zoom into your city (K)">🏰 City</button>
+          <button data-view="world" role="tab" title="Zoom out to the world (M)">🗺️ World</button>
         </div>
         <div id="alerts"></div>
         <div id="placing-hint" hidden></div>
@@ -53,7 +53,8 @@
       <!-- ===== Side panel ===== -->
       <aside id="panel">
         <nav class="tabs" role="tablist">
-          <button data-tab="info" class="active"><em id="tab-info-icon">🏗️</em><span id="tab-info-label">Build</span></button>
+          <button data-tab="info" class="active"><em>🏗️</em><span>Build</span></button>
+          <button data-tab="map"><em>🧭</em><span>Map</span></button>
           <button data-tab="research"><em>🎓</em><span>Research</span></button>
           <button data-tab="army"><em>⚔️</em><span>Army</span></button>
           <button data-tab="navy"><em>⚓</em><span>Navy</span></button>

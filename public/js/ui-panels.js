@@ -43,8 +43,8 @@ function updateHud() {
   el('builders').textContent = `${buildersBusy()}/${builderCount()}`;
   const unis = universities();
   el('research-chip').textContent = unis.length ? `${unis.filter((b) => b.research).length}/${unis.length}` : '—';
-  el('army-cap').textContent = `${totalHousing()}/${armyCap()}`;
-  el('fleet-cap').textContent = `${shipCount(allShips())}/${navalCap()}`;
+  el('army-cap').textContent = fmt(totalHousing());
+  el('fleet-cap').textContent = fmt(shipCount(allShips()));
   el('power').textContent = fmt(totalPower());
   el('shield-chip').hidden = S.shield <= 0;
   el('shield-time').textContent = fmtTime(S.shield);
@@ -99,23 +99,24 @@ function renderBattleHud() {
   const live = Battles.list;
   if (!live.length) { if (!box.hidden) { box.hidden = true; box.dataset.html = ''; } return; }
   const b = Battles.get(Battles.focus) || live[live.length - 1];
-  const cnt = (side) => Battles.active(b, side).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
+  const cnt = (ti) => Battles.active(b, ti).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
+  const pti = Math.max(0, Battles.playerTeam(b));
   const tabs = live.length > 1 ? `<div class="bh-tabs">${live.map((x) => `<button class="${x === b ? 'active' : ''}" data-action="b-tab" data-arg="${x.id}">⚔️ ${esc(x.cfg.title.slice(0, 26))}</button>`).join('')}</div>` : '';
   let h = tabs + `<div class="bh-head"><b>${esc(b.cfg.title)}</b><span class="muted">${b.done ? (b.result.win ? '🏆 Victory' : '💀 Defeat') : fmtTime(BATTLE_LIMIT - b.t)}</span>
-    <span class="bh-count"><span style="color:#f2c14e">${cnt(0)}</span> vs <span style="color:${b.cfg.right.color === '#222' ? '#ccc' : b.cfg.right.color}">${cnt(1)}</span>${b.towers.length ? ` · 🗼${b.towers.filter((t) => !t.dead && t.side === 1).length}` : ''}</span>
+    <span class="bh-count">${b.teams.map((T, ti) => `<span style="color:${T.color === '#222' ? '#ccc' : T.color}" title="${esc(T.name)}">${cnt(ti)}${b.towers.some((x) => x.team === ti && !x.dead) ? ' 🗼' + b.towers.filter((x) => x.team === ti && !x.dead).length : ''}</span>`).join(' vs ')}</span>
     <span class="spacer"></span>${btn('🎯', 'b-focus', b.id, { cls: 'sm ghost', title: 'Center camera' })}${b.done ? '' : btn('⏭ Auto-resolve', 'b-resolve', b.id, { cls: 'sm ghost' })}</div>`;
   if (!b.done) {
     for (const G of b.groups) {
-      if (G.side !== 0) continue;
-      const n = Battles.active(b, 0).filter((q) => q.g === G.gi).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
+      if (G.team !== pti || !b.teams[pti].player) continue;
+      const n = Battles.active(b, pti).filter((q) => q.g === G.gi).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
       if (!n) { h += `<div class="bh-row muted small">${esc(G.name)} — routed</div>`; continue; }
       h += `<div class="bh-row"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>
         <div class="seg">${Object.entries(FORMATIONS).map(([k, f]) => `<button class="${G.formation === k ? 'on' : ''}" data-action="b-form" data-arg="${b.id}:${G.gi}:${k}" title="${esc(f.name + ': ' + f.desc)}">${f.icon} ${f.name}</button>`).join('')}</div>
         <div class="seg">${Object.entries(STANCES).map(([k, st]) => `<button class="${G.stance === k ? 'on' : ''} ${k === 'retreat' ? 'warn' : ''}" data-action="b-stance" data-arg="${b.id}:${G.gi}:${k}" title="${esc(st.desc)}">${st.icon} ${st.name}</button>`).join('')}</div>
         <select data-btarget="${b.id}:${G.gi}" title="Target priority">${Object.entries(TARGETS).map(([k, v]) => `<option value="${k}" ${G.target === k ? 'selected' : ''}>🎯 ${v}</option>`).join('')}</select></div>`;
     }
-    const E = b.groups.find((G) => G.side === 1);
-    h += `<div class="bh-row small muted">Enemy: ${FORMATIONS[E.formation].icon} ${FORMATIONS[E.formation].name} · ${STANCES[E.stance].name}</div>`;
+    const others = b.groups.filter((G) => !b.teams[G.team].player);
+    h += `<div class="bh-row small muted">${b.teams.length > 2 ? `⚔️ ${b.teams.length}-way battle · ` : ''}${others.map((G) => `<span style="color:${b.teams[G.team].color === '#222' ? '#ccc' : b.teams[G.team].color}">${esc(G.name)}</span>: ${FORMATIONS[G.formation].icon} ${FORMATIONS[G.formation].name} · ${STANCES[G.stance].name}`).join(' &nbsp;|&nbsp; ')}</div>`;
   }
   if (box.dataset.html !== h && !UI.hudPointer && !(document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT')) { box.innerHTML = h; box.dataset.html = h; }
   box.hidden = false;
@@ -125,19 +126,16 @@ function renderBattleHud() {
 function renderPanel(force) {
   if (!S) return;
   if (!force && (UI.pointerDown || (document.activeElement && el('panel').contains(document.activeElement) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)))) return;
-  const fn = { info: renderInfo, research: renderResearch, army: renderArmy, navy: renderNavy, generals: renderGenerals, shop: renderShop, alliance: renderAlliance, log: renderLog }[UI.tab];
+  const fn = { info: renderInfo, map: renderWorldInfo, research: renderResearch, army: renderArmy, navy: renderNavy, generals: renderGenerals, shop: renderShop, alliance: renderAlliance, log: renderLog }[UI.tab];
   const html = fn();
   if (html !== UI.lastPanelHtml) {
     const body = el('panel-body'), scroll = body.scrollTop;
     body.innerHTML = html; body.scrollTop = scroll;
     UI.lastPanelHtml = html;
   }
-  el('tab-info-label').textContent = UI.view === 'world' ? 'Map' : 'Build';
-  el('tab-info-icon').textContent = UI.view === 'world' ? '🧭' : '🏗️';
   UI.panelDirty = false;
 }
 function renderInfo() {
-  if (UI.view === 'world') return renderWorldInfo();
   const b = S.buildings.find((x) => x.id === UI.selected);
   if (b) return renderBuildingInfo(b);
   if (UI.selHex >= 0 && obstacleAt(UI.selHex)) return renderObstacle(UI.selHex);
@@ -151,7 +149,7 @@ function renderObstacle(i) {
 }
 function renderBuildList() {
   const hall = S.buildings.find((b) => b.type === 'hall');
-  let h = `<h2>Build</h2><p class="muted small">Pick a structure, then click a free hex inside your golden border. Drag the map to look around; scroll to zoom. Click trees/rocks to clear them.</p>
+  let h = `<h2>Build</h2><p class="muted small">Your city lives on the world map at your capital — zoom in (🏰 City) to see it. Pick a structure, then click a free hex inside your golden border. Click trees/rocks to clear them.</p>
     <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · storage ${fmt(capOf('gold'))} · ${builderCount()} builders</div></div>
     <span class="spacer"></span>${btn('Open', 'select', hall.id, { cls: 'sm ghost' })}</div>
     ${hall.build > 0 ? `<div style="margin-top:8px">${progress(1 - hall.build / hall.buildTotal)}<div class="small muted">Upgrading… ${fmtTime(hall.build)}</div></div>` : ''}</div>`;
@@ -186,7 +184,7 @@ function renderBuildingInfo(b) {
   if (d.storage) h += `<dt>Storage bonus</dt><dd>+${Math.round(d.storage * b.level * 100)}%</dd>`;
   if (d.trains) h += `<dt>Unit level</dt><dd>${b.level} (+${12 * (b.level - 1)}% stats)</dd>`;
   if (d.builds) h += `<dt>Ship tier</dt><dd>${SHIP_TYPES.filter((t) => SHIPS[t].lvl <= b.level).map((t) => SHIPS[t].icon).join(' ')}</dd>`;
-  if (b.type === 'hall') h += `<dt>Storage cap</dt><dd>${fmt(capOf('gold'))} (💎${capOf('diamonds')})</dd><dt>Territory limit</dt><dd>${territoryLimit()} hexes</dd><dt>Army housing</dt><dd>${armyCap()}</dd><dt>Divisions</dt><dd>${divisionLimit()}</dd>`;
+  if (b.type === 'hall') h += `<dt>Storage cap</dt><dd>${fmt(capOf('gold'))} (💎${capOf('diamonds')})</dd><dt>Territory limit</dt><dd>${territoryLimit()} hexes</dd><dt>Divisions</dt><dd>${divisionLimit()}</dd>`;
   h += '</dl>';
   if (!(b.type === 'hall' && b.level >= MAX_HALL)) {
     const err = upgradeError(b);
@@ -264,12 +262,14 @@ function divisionCard(d) {
     <div class="row small" style="margin-top:4px"><span class="muted">General</span><select data-divgen="${d.id}">${[d.general].concat(idleGenerals().map((g) => g.uid)).concat(S.divisions.filter((x) => x !== d && x.general).map((x) => x.general)).filter((v, k, arr) => v && arr.indexOf(v) === k).map((u) => { const gd = generalData(u), post = generalPost(u); return `<option value="${u}" ${u === d.general ? 'selected' : ''}>${gd.icon} ${esc(gd.name)} ${'★'.repeat(genInst(u).stars)}${u === d.general ? '' : post.kind === 'division' ? ' (swap)' : ''}</option>`; }).join('')}</select></div>
     ${battleDefaults(d, 'division')}
     <div class="row wrap" style="margin-top:6px">${btn('🗺️ Select', 'select-entity', 'division:' + d.id, { cls: 'sm' })}
-      ${atHome(d) ? btn('➕ Reinforce', 'reinforce', d.id, { cls: 'sm ghost' }) + btn('Disband', 'disband', d.id, { cls: 'sm ghost' }) : btn('🏠 Return', 'return', 'division:' + d.id, { cls: 'sm ghost' })}
+      ${atHome(d) ? btn('🎚️ Troops', 'edit-troops', d.id, { cls: 'sm ghost', title: 'Add or remove soldiers' }) + btn('Disband', 'disband', d.id, { cls: 'sm ghost' }) : btn('🏠 Return', 'return', 'division:' + d.id, { cls: 'sm ghost' })}
+      ${btn('✂️ Split', 'split', d.id, { cls: 'sm ghost', disabled: d.status === 'fighting' || armyHousing(d.units) < 2, title: 'Split part of this division into a new one' })}
+      ${S.divisions.filter((o) => o !== d && o.at === d.at && !o.path.length && !d.path.length && o.status !== 'fighting').map((o) => btn(`🔗 Merge ${esc(o.name)} in`, 'merge', `${d.id}:${o.id}`, { cls: 'sm ghost' })).join('')}
       ${btn('✏️', 'rename-entity', 'division:' + d.id, { cls: 'sm ghost', title: 'Rename' })}</div></div>`;
 }
 function renderArmy() {
   const gp = armyPower(S.army, S.castellan);
-  let h = `<h2>Army</h2><dl class="kv"><dt>Housing (all troops + queue)</dt><dd>${totalHousing()} / ${armyCap()}</dd><dt>Garrison power</dt><dd>⚡ ${fmt(gp)}</dd>
+  let h = `<h2>Army</h2><dl class="kv"><dt>Troops (all, incl. queued)</dt><dd>${fmt(totalHousing())}</dd><dt>Garrison power</dt><dd>⚡ ${fmt(gp)}</dd>
     <dt>Defense rating</dt><dd>🛡️ ${fmt(defenseRating())}</dd><dt>Food upkeep</dt><dd>🌾 ${(upkeep().food * 60).toFixed(1)}/min</dd><dt>Castellan</dt><dd>${generalChip(S.castellan)}</dd></dl>
     <h3>Garrison (at the capital)</h3><div class="pills">${unitList(S.army, UNITS)}</div>
     <h3>Divisions · ${S.divisions.length}/${divisionLimit()}</h3>
@@ -302,7 +302,7 @@ function fleetCard(f) {
       ${btn('✏️', 'rename-entity', 'fleet:' + f.id, { cls: 'sm ghost', title: 'Rename' })}</div></div>`;
 }
 function renderNavy() {
-  let h = `<h2>Navy</h2><dl class="kv"><dt>Ships (all) / capacity</dt><dd>${shipCount(allShips())} + ${queuedShips()} queued / ${navalCap()}</dd><dt>Troop transport capacity</dt><dd>🚣 ${transportCapacity()}</dd>
+  let h = `<h2>Navy</h2><dl class="kv"><dt>Ships (all)</dt><dd>${shipCount(allShips())} + ${queuedShips()} queued</dd><dt>Troop transport capacity</dt><dd>🚣 ${transportCapacity()}</dd>
     <dt>Ship upkeep</dt><dd>🪙 ${(upkeep().gold * 60).toFixed(1)}/min</dd>${S.winds > 0 ? `<dt>Favourable winds</dt><dd>🌬️ ${fmtTime(S.winds)}</dd>` : ''}</dl>
     <h3>Seamen · ${S.army.seaman} ready</h3><p class="small muted">Every ship needs a crew of Seamen, trained at the Port. Crews go down with their ship.</p>${unitRow('seaman')}
     <h3>Home harbour</h3><div class="pills">${unitList(S.harbor, SHIPS)}</div><p class="small muted">Ships in harbour defend your port from pirates. Fleets can also dock at any Dock you build on the coast.</p>
@@ -368,15 +368,15 @@ function ordersFor(e, i) {
     if (f && f.type === 'cove' && !f.destroyed && seen) o.push(['cove', '🏴‍☠️ Attack pirate cove']);
     const k = owner >= 0 ? S.kingdoms[owner] : null;
     if (k && k.coastal && seen && !(S.allianceId && k.allianceId === S.allianceId)) o.push(['blockade', `⚓ Blockade ${k.name}`]);
-    const ef = S.aiFleets.find((x) => x.at === i && aiFleetHostile(x) && seen);
-    if (ef) o.push(['hunt', `🎯 Hunt ${ef.owner === 'pirate' ? 'pirates' : 'enemy fleet'}`]);
+    const ef = S.aiFleets.find((x) => WG.dist(x.at, i) <= 0 && seen);
+    if (ef) o.push(['hunt', ef.owner === 'pirate' ? '🎯 Attack the pirates' : `⚔️ Attack the ${S.kingdoms[ef.owner].name} navy${aiFleetHostile(ef) ? '' : ' (angers them)'}`]);
   } else {
     if (isPassable(i) || (isWater(i) && canEmbark(e))) o.push(['move', S.world.owner[i] === -2 ? '🛡️ Station & guard here' : '🚶 March here']);
     if (owner >= 0 && seen && !(S.allianceId && S.kingdoms[owner].allianceId === S.allianceId)) o.push(['attack', i === S.kingdoms[owner].capital ? `⚔️ Assault ${S.kingdoms[owner].name}` : '🏳️ Invade this hex']);
     if (f && seen && ((f.type === 'ruins' && !f.looted) || (f.type === 'cave' && !f.explored))) o.push(['explore', f.type === 'ruins' ? '🏛️ Explore ruins' : '🕳️ Explore cave']);
     if (f && f.type === 'fort' && !f.captured && seen) o.push(['capture', '🏯 Capture fort']);
-    const ea = S.aiArmies.find((x) => x.at === i && (x.kind === 'raid' || hostileToPlayer(S.kingdoms[x.kid])) && seen);
-    if (ea) o.push(['intercept', '🛡️ Intercept army']);
+    const ea = S.aiArmies.find((x) => x.at === i && seen);
+    if (ea) o.push(['attack-army', ea.kind === 'raid' || hostileToPlayer(S.kingdoms[ea.kid]) ? `🛡️ Intercept the ${S.kingdoms[ea.kid].name} army` : `⚔️ Attack the ${S.kingdoms[ea.kid].name} ${ea.kind === 'guard' ? 'guard' : 'army'} (angers them)`]);
   }
   return o;
 }
@@ -439,7 +439,7 @@ function hexCard(i) {
     }
     if (o >= 0) h += kingdomCard(S.kingdoms[o]);
     const here = S.aiArmies.filter((a) => a.at === i).concat(S.aiFleets.filter((f2) => f2.at === i));
-    for (const x of here) h += `<div class="card small">${x.ships ? `⛵ ${x.owner === 'pirate' ? 'Pirate fleet' : S.kingdoms[x.owner].name + ' fleet'} — ${shipCount(x.ships)} ships` : `⚔️ ${S.kingdoms[x.kid].name} army (${x.kind === 'raid' ? 'raiding you!' : x.kind === 'war' ? 'at war' : 'returning'}) — ${armyHousing(x.units)} troops`}</div>`;
+    for (const x of here) h += `<div class="card small">${x.ships ? `⛵ ${x.owner === 'pirate' ? 'Pirate fleet' : S.kingdoms[x.owner].name + (x.patrol ? ' navy patrol' : ' fleet')} — ${shipCount(x.ships)} ships ${unitList(x.ships, SHIPS)}` : `⚔️ ${S.kingdoms[x.kid].name} ${({ raid: 'raiders — coming for you!', war: 'war army', guard: 'guard army', home: 'army returning home' })[x.kind] || 'army'} — ${armyHousing(x.units)} troops ${unitList(x.units, UNITS)}`}</div>`;
   }
   const n = S.army.scout;
   h += `<h3>Scouting</h3><div class="card"><div class="row"><span>Send</span><select id="scout-count" style="width:70px">${Array.from({ length: Math.max(1, n) }, (_, k) => `<option>${k + 1}</option>`).join('')}</select><span class="small">of ${n} scouts</span><span class="spacer"></span>
