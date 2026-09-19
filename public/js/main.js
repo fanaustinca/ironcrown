@@ -13,7 +13,7 @@ function frame(now) {
 function frameInner(now) {
   let dt = (now - lastFrame) / 1000;
   lastFrame = now;
-  if (dt > 1.5) { let t = Math.min(dt, OFFLINE_CAP); while (t > 0) { const d = Math.min(2, t); step(d, true); t -= d; } dt = 0; }  // tab was hidden
+  if (dt > 1.5 && UI.gameSpeed > 0) { let t = Math.min(dt, OFFLINE_CAP); while (t > 0) { const d = Math.min(2, t); step(d, true); t -= d; } dt = 0; }  // tab was hidden
   dt = Math.min(dt, 0.25);
   let sim = dt * UI.gameSpeed;
   while (sim > 0) { const d = Math.min(1, sim); step(d); sim -= d; }
@@ -111,7 +111,7 @@ const cheats = {
   items(n = 5) { for (const k of Object.keys(ITEMS)) S.items[k] += n; return done(`+${n} of every item`); },
   reveal() { S.world.seen.fill(1); fogDirty = true; return done('map revealed'); },
   time(sec = 600) { window.ironcrown.debug.fastForward(sec); return done(`${sec}s simulated`); },
-  speed(x = 1) { UI.gameSpeed = clamp(x, 0, 20); return done(`game speed ×${UI.gameSpeed}`); },
+  speed(x = 1) { setSpeed(clamp(x, 0, 20)); return done(`game speed ×${UI.gameSpeed}`); },
   season(n = 3) { const cal = calendar(); S.time = (Math.floor(S.time / (DAY_LENGTH * 40)) * 40 + n * 10) * DAY_LENGTH + (cal.day - 1) * 0; return done(`season → ${SEASONS[n].name}`); },
   raid(kid) {
     const k = kid != null ? S.kingdoms[kid] : pick(S.kingdoms.filter(canReachCapital));

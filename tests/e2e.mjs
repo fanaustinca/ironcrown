@@ -507,6 +507,46 @@ await test('assets are version-stamped so updates never mix old and new files', 
   assert(srcs.length > 10 && srcs.every((x) => x.includes('?v=' + v)), 'every script carries ?v=' + v);
 });
 
+await test('pause and game speed controls', async () => {
+  await page.click('[data-speed="0"]');
+  const t0 = await G(() => window.ironcrown.state.time);
+  await page.waitForTimeout(700);
+  assert((await G(() => window.ironcrown.state.time)) === t0, 'paused: time stands still');
+  assert(await page.isVisible('#paused-banner'), 'paused banner shown');
+  await page.click('[data-speed="4"]');
+  const t1 = await G(() => window.ironcrown.state.time);
+  await page.waitForTimeout(500);
+  const dt = (await G(() => window.ironcrown.state.time)) - t1;
+  assert(dt > 1.2, `4× speed runs faster than real time (${dt.toFixed(2)}s in 0.5s)`);
+  await page.click('[data-speed="1"]');
+});
+
+await test('objectives guide the player and pay rewards', async () => {
+  const done = await G(() => { checkObjectives(); return Object.keys(window.ironcrown.state.objectives || {}); });
+  assert(done.length >= 3, `several objectives completed so far (${done.join(', ')})`);
+});
+
+await test('starvation makes soldiers desert', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state; const before = s.army.swordsman;
+    s.army.swordsman += 500; const b0 = s.army.swordsman; s.res.food = 0;
+    const farms = s.buildings.filter((b) => b.type === 'farm'); farms.forEach((b) => { b._lv = b.level; b.level = 0; });
+    for (let t = 0; t < 12; t++) step(1, true);
+    farms.forEach((b) => { b.level = b._lv; delete b._lv; });
+    return { b0, after: s.army.swordsman };
+  });
+  assert(r.after < r.b0, `hungry soldiers deserted (${r.b0} → ${r.after})`);
+});
+
+await test('render resolution setting changes canvas density', async () => {
+  await page.click('.hud-stats [data-action="settings"]');
+  await page.selectOption('[data-setting="resolution"]', 'performance');
+  const w1 = await page.$eval('#stage', (c) => c.width / c.getBoundingClientRect().width);
+  await page.selectOption('[data-setting="resolution"]', 'balanced');
+  await page.keyboard.press('Escape');
+  assert(w1 <= 1.01, `performance mode renders at 1× (${w1.toFixed(2)})`);
+});
+
 await test('graphics quality: high textures ↔ low-poly switch live', async () => {
   await page.click('.hud-stats [data-action="settings"]');
   await page.selectOption('[data-setting="graphics"]', 'low');

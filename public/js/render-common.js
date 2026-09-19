@@ -40,9 +40,14 @@ class Camera {
 }
 const CAM = new Camera(WG, 0.25, 10);   // one camera for the one map
 
+// Render resolution: 'sharp' = full device density, 'balanced' = at most 1.25×, 'performance' = 1×.
+function renderScale() {
+  const dev = window.devicePixelRatio || 1;
+  return SETTINGS.resolution === 'sharp' ? Math.min(dev, 2) : SETTINGS.resolution === 'performance' ? Math.min(dev, 1) : Math.min(dev, 1.25);
+}
 function resize() {
   const r = cv.getBoundingClientRect();
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  DPR = renderScale();
   CW = Math.max(200, r.width); CH = Math.max(200, r.height);
   cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR);
   CAM.clamp();

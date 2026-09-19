@@ -118,53 +118,96 @@ function drawBanner(g, x, y, color, icon, count, t, selected, enemy) {
   g.fillStyle = enemy ? '#ffb3ad' : '#fff'; g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.fillText(`${icon}${count}`, x, y + 15); g.textAlign = 'left';
 }
 
-let fogCache = null, fogVersion = -1;
-const FOG_SCALE = 0.25;
-let fogBuiltAt = -1e9;
+/* ---- Fog of war: one pixel per hex (2 px wide so odd rows can shift by half a hex),
+   upscaled with smoothing for soft edges, then textured with pre-rendered clouds.
+   A rebuild touches ~16k pixels — well under a millisecond. ---- */
+let fogMask = null, fogCanvas = null, fogClouds = null, fogBuiltAt = -1e9;
+const FOG_UP = 4;   // mask pixels → fog canvas pixels
 function fogLayer() {
-  if (fogCache && (!fogDirty || performance.now() - fogBuiltAt < 500)) return fogCache;
+  if (fogCanvas && (!fogDirty || performance.now() - fogBuiltAt < 250)) return fogCanvas;
   fogDirty = false; fogBuiltAt = performance.now();
-  const w = Math.ceil(WG.pw * FOG_SCALE), h = Math.ceil(WG.ph * FOG_SCALE);
-  const tiles = document.createElement('canvas'); tiles.width = w + 40; tiles.height = h + 40;
-  const tg = tiles.getContext('2d');
-  tg.translate(20, 20); tg.scale(FOG_SCALE, FOG_SCALE);
-  tg.fillStyle = '#0c0f15';
-  tg.beginPath();
-  for (let i = 0; i < WG.N; i++) if (!S.world.seen[i]) WG.hexPath(tg, i, 1.12);
-  tg.fill();
-  tg.globalCompositeOperation = 'source-atop';
-  const rng = mulberry32(S.seed + 5);
-  for (let k = 0; k < 110; k++) {
-    const x = rng() * WG.pw, y = rng() * WG.ph, r = 30 * (1.5 + rng() * 3.5);
-    const grd = tg.createRadialGradient(x, y, 0, x, y, r); grd.addColorStop(0, 'rgba(70,78,98,.45)'); grd.addColorStop(1, 'rgba(70,78,98,0)');
-    tg.fillStyle = grd; tg.fillRect(x - r, y - r, r * 2, r * 2);
+  const MW = WG.W * 2 + 1, MH = WG.H;
+  if (!fogMask) { fogMask = document.createElement('canvas'); fogMask.width = MW; fogMask.height = MH; }
+  const mg = fogMask.getContext('2d'), img = mg.createImageData(MW, MH), d = img.data, seen = S.world.seen;
+  for (let r = 0; r < MH; r++) for (let c = 0; c < WG.W; c++) {
+    if (seen[r * WG.W + c]) continue;
+    const x = 2 * c + (r & 1);
+    for (const px of [x, x + 1]) { const o = (r * MW + px) * 4; d[o] = 12; d[o + 1] = 15; d[o + 2] = 21; d[o + 3] = 242; }
   }
-  fogCache = document.createElement('canvas'); fogCache.width = tiles.width; fogCache.height = tiles.height;
-  const fg = fogCache.getContext('2d');
-  fg.filter = 'blur(3px)'; fg.drawImage(tiles, 0, 0); fg.filter = 'none';
-  fg.globalAlpha = 0.55; fg.drawImage(tiles, 0, 0);
-  return fogCache;
+  mg.putImageData(img, 0, 0);
+  if (!fogCanvas) { fogCanvas = document.createElement('canvas'); fogCanvas.width = MW * FOG_UP; fogCanvas.height = MH * FOG_UP; }
+  const fg = fogCanvas.getContext('2d');
+  fg.globalCompositeOperation = 'copy'; fg.imageSmoothingEnabled = true; fg.imageSmoothingQuality = 'high';
+  fg.drawImage(fogMask, 0, 0, fogCanvas.width, fogCanvas.height);
+  fg.globalCompositeOperation = 'source-atop';
+  fg.drawImage(fogCloudTexture(), 0, 0);
+  fg.globalCompositeOperation = 'source-over';
+  return fogCanvas;
+}
+function fogCloudTexture() {
+  if (fogClouds) return fogClouds;
+  fogClouds = document.createElement('canvas'); fogClouds.width = (WG.W * 2 + 1) * FOG_UP; fogClouds.height = WG.H * FOG_UP;
+  const g = fogClouds.getContext('2d'), rng = mulberry32(S.seed + 5);
+  for (let k = 0; k < 160; k++) {
+    const x = rng() * fogClouds.width, y = rng() * fogClouds.height, r = 12 + rng() * 40;
+    const grd = g.createRadialGradient(x, y, 0, x, y, r); grd.addColorStop(0, 'rgba(70,78,98,.45)'); grd.addColorStop(1, 'rgba(70,78,98,0)');
+    g.fillStyle = grd; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  return fogClouds;
+}
+function drawFog(g) {
+  const hw = W_HEX * SQ3, img = fogLayer();
+  const sx = (hw / 2) / FOG_UP, sy = (W_HEX * 1.5) / FOG_UP, oy = W_HEX * 0.25;   // map units per fog pixel
+  const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+  const px0 = clamp(Math.floor(x0 / sx) - 2, 0, img.width), px1 = clamp(Math.ceil(x1 / sx) + 2, 0, img.width);
+  const py0 = clamp(Math.floor((y0 - oy) / sy) - 2, 0, img.height), py1 = clamp(Math.ceil((y1 - oy) / sy) + 2, 0, img.height);
+  if (px1 > px0 && py1 > py0) g.drawImage(img, px0, py0, px1 - px0, py1 - py0, px0 * sx, oy + py0 * sy, (px1 - px0) * sx, (py1 - py0) * sy);
+}
+// Blit only the part of a whole-world image that is on screen (scale = image px per map unit).
+function blitCrop(g, img, scale, x, y, w, h) {
+  const sx0 = clamp(x * scale, 0, img.width), sy0 = clamp(y * scale, 0, img.height), sx1 = clamp((x + w) * scale, 0, img.width), sy1 = clamp((y + h) * scale, 0, img.height);
+  if (sx1 > sx0 && sy1 > sy0) g.drawImage(img, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 / scale, sy0 / scale, (sx1 - sx0) / scale, (sy1 - sy0) / scale);
+}
+function blitView(g, img, scale) {
+  const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+  blitCrop(g, img, scale, x0 - 4, y0 - 4, x1 - x0 + 8, y1 - y0 + 8);
 }
 
 /* ---- zoomed-out LOD: the whole 16k-hex terrain cached as one image ---- */
 const LIVE_Z = 1.8;                   // at or above this zoom the terrain is drawn live, hex by hex
 let terrainBmp = null, terrainBmpKey = '', ownerBmp = null, ownerBmpVer = -1, ownerBmpAt = -1e9;
+// Built in row slices across frames; the previous image stays on screen until the new one is ready.
+let terrainJob = null;
 function terrainBitmap() {
-  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}`;
-  if (terrainBmp && key === terrainBmpKey) return terrainBmp;
-  terrainBmpKey = key;
-  const c = terrainBmp || document.createElement('canvas');
-  c.width = Math.ceil(WG.pw); c.height = Math.ceil(WG.ph);
-  const g = c.getContext('2d');
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, c.width, c.height);
-  const all = Array.from({ length: WG.N }, (_, i) => i), terrain = S.world.terrain, isLandW = (i) => terrain[i] !== T.WATER;
+  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}|${SETTINGS.showGrid}`;
+  if (terrainBmp && key === terrainBmpKey && !terrainJob) return terrainBmp;
+  if (!terrainJob || terrainJob.key !== key) {
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(WG.pw); c.height = Math.ceil(WG.ph);
+    const g = c.getContext('2d');
+    g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, c.width, c.height);
+    terrainJob = { key, c, g, row: 0 };
+  }
+  const J = terrainJob, terrain = S.world.terrain, isLandW = (i) => terrain[i] !== T.WATER;
+  const first = !terrainBmp, t0 = performance.now();
+  // the very first build happens in one go (loading); later rebuilds take ~8 ms per frame
+  while (J.row < WG.H && (first || performance.now() - t0 < 8)) {
+    const r0 = J.row, r1 = Math.min(WG.H, r0 + 6);
+    const band = [];
+    for (let r = Math.max(0, r0 - 2); r < Math.min(WG.H, r1 + 2); r++) for (let q = 0; q < WG.W; q++) band.push(r * WG.W + q);
+    const own = band.filter((i) => WG.row(i) >= r0 && WG.row(i) < r1);
+    J.g.save();
+    J.g.beginPath(); J.g.rect(0, r0 === 0 ? 0 : WG.cy[r0 * WG.W] - W_HEX * 0.75, J.c.width, (r1 === WG.H ? J.c.height : WG.cy[(r1 - 1) * WG.W] + W_HEX * 0.75) - (r0 === 0 ? 0 : WG.cy[r0 * WG.W] - W_HEX * 0.75)); J.g.clip();
+    GFX.pat.clear(); GFX.ctx = null;
+    drawTerrainBase(J.g, WG, band, isLandW, WDEPTH, worldLandColor, S.seed + 1, 0, (i) => WORLD_TEX[terrain[i]], worldShade);
+    for (const i of band) if (isLandW(i)) drawTerrainDetail(J.g, i, 0);
+    if (SETTINGS.showGrid) { J.g.strokeStyle = 'rgba(0,0,0,.08)'; J.g.lineWidth = 0.7; J.g.beginPath(); for (const i of own) if (isLandW(i)) WG.hexPath(J.g, i, 0.99); J.g.stroke(); }
+    J.g.restore();
+    J.row = r1;
+  }
   GFX.pat.clear(); GFX.ctx = null;
-  drawTerrainBase(g, WG, all, isLandW, WDEPTH, worldLandColor, S.seed + 1, 0, (i) => WORLD_TEX[terrain[i]], worldShade);
-  for (const i of all) if (isLandW(i)) drawTerrainDetail(g, i, 0);
-  GFX.pat.clear(); GFX.ctx = null;
-  terrainBmp = c;
-  return c;
+  if (J.row >= WG.H) { terrainBmp = J.c; terrainBmpKey = J.key; terrainJob = null; }
+  return terrainBmp || J.c;
 }
 function ownerBitmap() {
   if (ownerBmp && (ownerBmpVer === worldVersion || performance.now() - ownerBmpAt < 1000)) return ownerBmp;
@@ -178,7 +221,7 @@ function ownerBitmap() {
   return c;
 }
 /* ---- zoomed-in LOD: terrain cached in map tiles ("chunks"), rebuilt only when they change ---- */
-const LODS = [{ maxZ: 3.2, S: 2.5, size: 200, cap: 40 }, { maxZ: Infinity, S: 6, size: 120, cap: 28 }];
+const LODS = [{ maxZ: 3.2, S: 2.5, size: 128, cap: 90 }, { maxZ: Infinity, S: 6, size: 96, cap: 44 }];
 const chunkCache = [new Map(), new Map()], chunkDirty = new Set();
 let chunkKey = '';
 // Invalidate the tiles around a hex (buildings/clearings change which decorations show).
@@ -203,25 +246,26 @@ function renderChunk(L, cx, cy, occupied) {
     if (!isLandW(i) || occupied.has(i) || WG.dist(i, cap) <= 1 || (cleared(i) && S.world.owner[i] === -2)) continue;
     drawTerrainDetail(g, i, 0);
   }
+  if (SETTINGS.showGrid) { g.strokeStyle = 'rgba(0,0,0,.09)'; g.lineWidth = 0.5; g.beginPath(); for (const i of list) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
   GFX.pat.clear(); GFX.ctx = null;
   return c;
 }
 function drawChunks(g, z, occupied) {
-  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}`;
+  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}|${SETTINGS.showGrid}`;
   if (key !== chunkKey) { chunkKey = key; chunkCache.forEach((m) => m.clear()); chunkDirty.clear(); }
   const li = z < LODS[0].maxZ ? 0 : 1, L = LODS[li], cache = chunkCache[li];
   for (const k of chunkDirty) { if (k.startsWith(L.size + ':')) { cache.delete(k.slice(k.indexOf(':') + 1)); chunkDirty.delete(k); } }
   const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
   const cx0 = Math.floor(x0 / L.size), cx1 = Math.floor(x1 / L.size), cy0 = Math.floor(y0 / L.size), cy1 = Math.floor(y1 / L.size);
-  let budget = 3;                                     // build at most a few tiles per frame (no hitches)
+  const t0 = performance.now();                      // build tiles for at most ~6 ms per frame (no hitches)
   const want = [];
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) want.push([cx, cy, Math.hypot(cx - (cx0 + cx1) / 2, cy - (cy0 + cy1) / 2)]);
   want.sort((a, b) => a[2] - b[2]);
   for (const [cx, cy] of want) {
     const k = cx + ',' + cy;
     let c = cache.get(k);
-    if (!c && budget > 0) { budget--; c = renderChunk(L, cx, cy, occupied); cache.set(k, c); }
-    if (!c) continue;
+    if (!c && performance.now() - t0 < 6) { c = renderChunk(L, cx, cy, occupied); cache.set(k, c); }
+    if (!c) { blitCrop(g, terrainBitmap(), 1, cx * L.size, cy * L.size, L.size, L.size); continue; }
     cache.delete(k); cache.set(k, c);                 // LRU touch
     g.drawImage(c, cx * L.size, cy * L.size, L.size, L.size);
   }
@@ -265,9 +309,8 @@ function drawWorld(g, t, dt) {
   const occupied = new Set(S.buildings.map((b) => b.hex));
   for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) occupied.add(b.hex);
   if (live) {
-    g.drawImage(terrainBitmap(), 0, 0, WG.pw, WG.ph);    // instant fallback under tiles still being built
-    drawChunks(g, z, occupied);
-    if (SETTINGS.graphics === 'high') {                   // animated water on top of the cached tiles
+    drawChunks(g, z, occupied);                          // (draws a cropped fallback only where tiles are still missing)
+    if (SETTINGS.graphics === 'high' && z >= 2.4) {       // animated water on top of the cached tiles
       const water = vis.filter((i) => !isLandW(i) && WDEPTH[i] <= 4);
       if (water.length) {
         g.save(); g.beginPath(); for (const i of water) { g.moveTo(WG.cx[i] + W_HEX * 1.2, WG.cy[i]); g.arc(WG.cx[i], WG.cy[i], W_HEX * 1.2, 0, Math.PI * 2); } g.clip();
@@ -278,12 +321,10 @@ function drawWorld(g, t, dt) {
     g.beginPath();
     for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 2, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 3 + o, y); g.quadraticCurveTo(x + o, y - 1.2, x + 3 + o, y); }
     g.stroke();
-    if (SETTINGS.showGrid) { g.strokeStyle = 'rgba(0,0,0,.09)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
     drawTerritory(g, vis, z);
   } else {
-    g.drawImage(terrainBitmap(), 0, 0, WG.pw, WG.ph);
-    if (SETTINGS.showGrid && z > 0.8) { g.strokeStyle = 'rgba(0,0,0,.07)'; g.lineWidth = 1 / z; g.beginPath(); for (const i of vis) if (isLandW(i)) WG.hexPath(g, i, 0.99); g.stroke(); }
-    g.drawImage(ownerBitmap(), 0, 0, WG.pw, WG.ph);
+    blitView(g, terrainBitmap(), 1);
+    blitView(g, ownerBitmap(), 0.5);
   }
   if (z > 0.6) for (const i of vis) { const f = feat[i]; if (f && isSeen(i) && !occupied.has(i)) drawFeature(g, i, f, t); }
   drawCityLayer(g, t, dt, vis);
@@ -360,7 +401,7 @@ function drawWorld(g, t, dt) {
   }
   drawCloudShadows(g, WG, t);
   // fog
-  g.drawImage(fogLayer(), -20 / FOG_SCALE, -20 / FOG_SCALE, fogCache.width / FOG_SCALE, fogCache.height / FOG_SCALE);
+  drawFog(g);
   Battles.draw(g, t);   // battles stay visible above the fog
   // labels (on top of fog so known names stay readable)
   const fs = 12 / z;

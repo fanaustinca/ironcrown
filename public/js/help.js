@@ -13,6 +13,7 @@ const HELP = [
       <li>Switch to the <b>🗺️ World</b> view (top-left, or press <kbd>M</kbd>) to explore, claim land, fight and trade.</li>
       <li>Build a <b>University</b> and start <b>🎓 Research</b> early, because it multiplies everything.</li>
     </ol>
+    <p><b>🎯 Objectives</b> at the top of the Build tab guide you through every system (farms, the Main Hall, troops, scouting, land, defenses, research, divisions, battles, fleets, alliances) and pay rewards when completed.</p>
     <p class="tip">Tip: hover over anything for a tooltip. The top bar shows every resource with its storage cap and income per minute. Hover a resource for a full breakdown.</p>` },
   { id: 'camera', icon: '🎥', title: 'One map, camera & controls', html: `
     <p><b>There is only one map, made of small hexes.</b> Land, sea, your city, enemy cities, armies and battles all share the same hex grid. <b>Zoom in</b> (scroll or pinch) to build and manage your city. <b>Zoom out</b> to see the continent: every kingdom's cities and territory, and every army, guard, fleet and battle. Enemy capitals are real cities too: zoom in on one to see its keep, buildings, walls and towers.</p>
@@ -27,7 +28,10 @@ const HELP = [
       <tr><td>Right-click (World)</td><td>Give the selected division/fleet the default order for that hex</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>Cancel placement / deselect / close dialogs</td></tr>
       <tr><td><kbd>H</kbd> or <kbd>?</kbd></td><td>This help guide</td></tr>
+      <tr><td><kbd>P</kbd> / ⏸ 1× 2× 4×</td><td>Pause or change game speed (top-left of the map)</td></tr>
     </table>
+    <h4>Performance</h4>
+    <p>If the game lags, open ⚙️ Settings and set <b>Render resolution → ⚡ Performance</b>. It has the biggest effect, especially on high-DPI and 4K screens. <b>Graphics quality → 🔷 Low-poly</b> helps too.</p>
     <h4>Graphics quality</h4>
     <p>⚙️ Settings → <b>Graphics quality</b> switches instantly between <b>✨ High</b>, <b>🎨 Classic</b> and <b>🔷 Low-poly</b>. High has realistic procedural textures (grass blades, meadow flowers, forest litter, rock, sand ripples, snow), hill-shading, animated water with sun glints, and drifting cloud shadows. Classic uses flat colours. Low-poly draws every hex as flat-shaded facets and is the fastest option on weak devices.</p>
     <p>Open <b>⚙️ Settings</b> in the top bar to choose how the camera moves: <b>Drag</b>, <b>Keyboard</b> or <b>Both</b>. You can also invert dragging, turn on edge scrolling, change the zoom speed and toggle the minimap. On the World map, click or drag the <b>minimap</b> in the corner to jump anywhere.</p>` },
@@ -46,7 +50,7 @@ const HELP = [
     <p>There are five resources: 🪙 Gold, ⛓️ Iron, 💎 Diamonds, 🪵 Lumber and 🌾 Food. They flow in automatically from mines, mills, farms, the Main Hall (taxes), Ports (trade) and the <b>land you hold on the World map</b>.</p>
     <ul>
       <li><b>Storage</b> is capped by the Main Hall. Warehouses and the Banking research raise it. A full bar turns gold.</li>
-      <li><b>Upkeep:</b> every soldier eats food, and every ship costs a little gold. Keep your income positive!</li>
+      <li><b>Upkeep:</b> every soldier eats food, and every ship costs a little gold. If your food runs out while income is negative, <b>soldiers desert</b> (1% every 10 seconds) until you fix it.</li>
       <li><b>Seasons</b> pass every 10 in-game days (15 minutes). Spring +10% food, autumn +15% food, <b>winter −30% food and slower marches</b>. The map turns snowy.</li>
       <li><b>Market:</b> a Port lets you sell surplus goods for gold, or buy what you lack.</li>
     </ul>` },

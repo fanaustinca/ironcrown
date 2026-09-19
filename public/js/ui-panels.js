@@ -56,7 +56,8 @@ function updateHud() {
   const alerts = Battles.list.filter((b) => !b.done).map((b) => `<button class="alert battle" data-action="b-focus" data-arg="${b.id}">⚔️ Battle: ${esc(b.cfg.title)} — command it!</button>`)
     .concat(threats.map((a) => { const tgt = a.targetHex ?? S.world.capital, cap = tgt === S.world.capital; return `<button class="alert" data-action="focus-hex" data-arg="${a.at}">⚠ ${esc(S.kingdoms[a.kid].name)} army → ${cap ? 'capital' : hexName(tgt) + (isDefended(tgt) ? '' : ' (undefended)')} · ETA ${fmtTime(etaAi(a))}</button>`; }))
     .concat(pir.map((p) => `<button class="alert pirate" data-action="focus-hex" data-arg="${p.at}">🏴‍☠️ Pirates sighted</button>`))
-    .concat(S.pirateBlockade > 0 ? [`<span class="alert">⚓ Port blockaded ${fmtTime(S.pirateBlockade)}</span>`] : []);
+    .concat(S.pirateBlockade > 0 ? [`<span class="alert">⚓ Port blockaded ${fmtTime(S.pirateBlockade)}</span>`] : [])
+    .concat(S.res.food <= 0 && rates().food < 0 ? ['<span class="alert">🌾 Starving — troops are deserting! Build farms.</span>'] : []);
   const html = alerts.join('');
   if (el('alerts').dataset.html !== html) { el('alerts').innerHTML = html; el('alerts').dataset.html = html; }
 }
@@ -150,9 +151,17 @@ function renderObstacle(i) {
     <p class="small">Clear this hex to free space for building. You'll get ${o === 'tree' ? '🪵60 lumber' : '⛓️40 iron (and maybe a gem)'}.</p>
     ${btn('🪓 Clear for 🪙25', 'clear-obstacle', i, { cls: 'block', disabled: !inLand(i), title: inLand(i) ? '' : 'Outside your land' })}`;
 }
+function objectivesCard() {
+  const done = S.objectives || {};
+  const open = OBJECTIVES.filter((o) => !done[o.id]);
+  if (!open.length) return '';
+  const next = open.slice(0, 3);
+  return `<div class="card obj"><div class="row"><b>🎯 Objectives</b><span class="spacer"></span><span class="small muted">${OBJECTIVES.length - open.length}/${OBJECTIVES.length}</span></div>
+    ${next.map((o) => `<div class="small obj-row">▫️ ${esc(o.text)} <span class="muted">→ ${costHtml(o.reward)}</span></div>`).join('')}</div>`;
+}
 function renderBuildList() {
   const hall = S.buildings.find((b) => b.type === 'hall');
-  let h = `<h2>Build</h2><p class="muted small">Build on <b>any hex you own</b>. Pick a structure, then click a hex of your land, or click an empty hex of your land and choose from <b>Build here</b>. Terrain matters: mills in forests, mines on hills, farms on plains.</p>
+  let h = objectivesCard() + `<h2>Build</h2><p class="muted small">Build on <b>any hex you own</b>. Pick a structure, then click a hex of your land, or click an empty hex of your land and choose from <b>Build here</b>. Terrain matters: mills in forests, mines on hills, farms on plains.</p>
     <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · ${playerTiles()} hexes · ${builderCount()} builders</div></div>
     <span class="spacer"></span>${btn('Open', 'select', hall.id, { cls: 'sm ghost' })}</div>
     ${hall.build > 0 ? `<div style="margin-top:8px">${progress(1 - hall.build / hall.buildTotal)}<div class="small muted">Upgrading… ${fmtTime(hall.build)}</div></div>` : ''}</div>`;

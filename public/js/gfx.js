@@ -213,11 +213,19 @@ function drawCloudShadows(g, grid, t) {
   }
 }
 // Warm sunlight + vignette in screen space (High quality only).
+let atmoCache = null, atmoKey = '';
 function drawAtmosphere(g) {
   if (SETTINGS.graphics !== 'high') return;
-  const v = g.createRadialGradient(CW * 0.35, CH * 0.25, Math.min(CW, CH) * 0.2, CW / 2, CH / 2, Math.max(CW, CH) * 0.75);
-  v.addColorStop(0, 'rgba(255,236,190,.06)'); v.addColorStop(0.6, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,10,.28)');
-  g.fillStyle = v; g.fillRect(0, 0, CW, CH);
+  const key = `${CW}x${CH}`;
+  if (key !== atmoKey) {   // render the sunlight/vignette once per screen size, not every frame
+    atmoKey = key;
+    atmoCache = document.createElement('canvas'); atmoCache.width = Math.ceil(CW / 2); atmoCache.height = Math.ceil(CH / 2);
+    const a = atmoCache.getContext('2d'); a.scale(0.5, 0.5);
+    const v = a.createRadialGradient(CW * 0.35, CH * 0.25, Math.min(CW, CH) * 0.2, CW / 2, CH / 2, Math.max(CW, CH) * 0.75);
+    v.addColorStop(0, 'rgba(255,236,190,.06)'); v.addColorStop(0.6, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,10,.28)');
+    a.fillStyle = v; a.fillRect(0, 0, CW, CH);
+  }
+  g.drawImage(atmoCache, 0, 0, CW, CH);
 }
 
 /* ---- building materials (High quality): stone, planks, roof tiles ---- */

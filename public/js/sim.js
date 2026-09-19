@@ -777,8 +777,22 @@ function onPlayerEnter(ent) {
     if (ent.replan % 4 === 0 || !ent.path.length) { const p = planPath(ent, tgt.at); if (p) ent.path = p; }
   }
 }
+function checkObjectives() {
+  S.objectives = S.objectives || {};
+  for (const o of OBJECTIVES) {
+    if (S.objectives[o.id]) continue;
+    let ok = false; try { ok = o.test(); } catch { ok = false; }
+    if (!ok) continue;
+    S.objectives[o.id] = true; gain(o.reward, true);
+    log(`🎯 Objective complete: ${o.text}! Reward ${costText(o.reward)}.`, 'good');
+    toast(`🎯 Objective complete: ${o.text} (+${costText(o.reward)})`, 'good');
+    UI.panelDirty = true;
+  }
+}
 function step(dt, offline = false) {
   S.time += dt;
+  S.objTimer = (S.objTimer || 0) - dt;
+  if (S.objTimer <= 0) { S.objTimer = 2; checkObjectives(); }
   const r = rates();
   for (const k of RES) {
     const cap = capOf(k);
@@ -790,6 +804,17 @@ function step(dt, offline = false) {
     if (b.queue) stepQueue(b, dt);
     if (b.research) stepResearch(b, dt);
   }
+  // Hungry soldiers desert: with no food and negative income, lose 1% of troops every 10 s.
+  if (S.res.food <= 0 && r.food < 0) {
+    S.starve = (S.starve || 0) + dt;
+    if (S.starve >= 10) {
+      S.starve = 0;
+      let lost = 0;
+      for (const u of COMBAT_UNITS) { const n = Math.ceil((S.army[u] || 0) * 0.01); S.army[u] -= n; lost += n; }
+      for (const d of S.divisions) for (const u of COMBAT_UNITS) { const n = Math.floor((d.units[u] || 0) * 0.01); d.units[u] -= n; lost += n; }
+      if (lost && !offline) log(`🌾 Starvation: ${lost} hungry soldiers deserted. Build farms or reduce your army.`, 'bad');
+    }
+  } else S.starve = 0;
   S.shield = Math.max(0, S.shield - dt);
   S.winds = Math.max(0, S.winds - dt);
   S.pirateBlockade = Math.max(0, (S.pirateBlockade || 0) - dt);

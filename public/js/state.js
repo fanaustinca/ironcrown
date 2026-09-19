@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   battleMode: 'watch',    // 'watch' = fought live on the map, 'auto' = resolved instantly
   focusBattles: true,     // camera jumps to battles as they start
   graphics: 'high',       // 'high' (textured) | 'medium' (classic) | 'low' (low-poly)
+  resolution: 'balanced', // 'sharp' | 'balanced' | 'performance' (canvas pixel density)
   minimap: true,
 };
 let SETTINGS = { ...DEFAULT_SETTINGS };
@@ -163,7 +164,8 @@ function catchUp() {
   if (away < 5) return;
   const before = { ...S.res };
   let t = away;
-  while (t > 0) { const d = Math.min(2, t); step(d, true); t -= d; }
+  const chunk = away > 3600 ? 10 : away > 600 ? 5 : 2;   // coarser steps for long absences keep loading fast
+  while (t > 0) { const d = Math.min(chunk, t); step(d, true); t -= d; }
   const gains = RES.map((k) => [k, S.res[k] - before[k]]).filter(([, v]) => Math.abs(v) >= 1);
   if (gains.length) {
     log(`While you were away (${fmtTime(away)}) your kingdom produced ` + gains.map(([k, v]) => `${RES_META[k].icon}${fmt(v)}`).join(' '), 'good');

@@ -1,4 +1,4 @@
-# 👑 Ironcrown `v3.1.0`
+# 👑 Ironcrown `v3.2.0`
 
 A browser kingdom-strategy game and living world simulation. Build a kingdom on a hex map, research technologies at
 universities, raise armies and navies, group them into divisions and fleets, explore ruins, caves, forts and
@@ -57,7 +57,7 @@ public/                 ← the game; GitHub Pages serves this folder
     ui-actions.js       modals, actions, map input (drag / keys / edge / pinch / wheel)
     main.js             game loop, boot, test hooks, dev cheats
 server/server.py        optional backend (stdlib only): static files + /api/save + /api/leaderboard
-tests/e2e.mjs           Playwright headless-browser suite (36 tests + screenshots)
+tests/e2e.mjs           Playwright headless-browser suite (40 tests + screenshots)
 .github/workflows/deploy.yml   CI: run tests → deploy public/ to GitHub Pages
 deploy.sh               one-shot git init + gh repo create + Pages setup
 ```

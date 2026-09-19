@@ -5,7 +5,7 @@
    ========================================================================== */
 'use strict';
 
-const GAME_VERSION = '3.1.0';
+const GAME_VERSION = '3.2.0';
 const SAVE_VERSION = 3;
 
 // ONE map made of small hexes (pointy-top, odd-r offset). Cities, land, sea,
@@ -244,3 +244,19 @@ const STANCES = {
   retreat: { name: 'Retreat', icon: '↩️', desc: 'Fall back off the field; escaped troops survive.' },
 };
 const TARGETS = { nearest: 'Nearest', weakest: 'Weakest', ranged: 'Archers & siege', cavalry: 'Cavalry', towers: 'Towers' };
+
+/* ---- Objectives: a guided path through the game's systems (rewards on completion) ---- */
+const OBJECTIVES = [
+  { id: 'farm2',    text: 'Build a second Farm',                 test: () => countOf('farm') >= 2 && S.buildings.filter((b) => b.type === 'farm' && b.level > 0).length >= 2, reward: { gold: 200, lumber: 200 } },
+  { id: 'hall2',    text: 'Upgrade the Main Hall to level 2',    test: () => hallLevel() >= 2, reward: { gold: 500, lumber: 400, iron: 150 } },
+  { id: 'barracks', text: 'Build a Barracks and train 5 Swordsmen', test: () => S.buildings.some((b) => b.type === 'barracks' && b.level > 0) && (S.army.swordsman + S.divisions.reduce((a, d) => a + d.units.swordsman, 0)) >= 11, reward: { gold: 300, iron: 150 } },
+  { id: 'scout',    text: 'Send scouts to explore the fog',      test: () => S.stats.scouted >= 5, reward: { gold: 250, food: 250 } },
+  { id: 'claim',    text: 'Claim land away from your capital',   test: () => playerTiles() >= 80, reward: { gold: 400, food: 300 } },
+  { id: 'defense',  text: 'Protect an outlying building with a Tower', test: () => S.buildings.some((b) => b.type === 'tower' && b.level > 0 && WG.dist(b.hex, S.world.capital) >= 6), reward: { gold: 400, lumber: 300 } },
+  { id: 'uni',      text: 'Build a University and research a technology', test: () => S.stats.researched >= 1, reward: { gold: 600, diamonds: 10 } },
+  { id: 'division', text: 'Muster a second division',            test: () => S.divisions.length >= 2, reward: { gold: 500, food: 400 } },
+  { id: 'win',      text: 'Win a battle',                        test: () => S.stats.battlesWon + S.stats.raidsRepelled >= 1, reward: { gold: 800, diamonds: 10 } },
+  { id: 'fleet',    text: 'Build a ship and form a fleet',       test: () => S.fleets.length >= 1, reward: { gold: 700, lumber: 500 } },
+  { id: 'hall5',    text: 'Reach Main Hall 5',                   test: () => hallLevel() >= 5, reward: { gold: 3000, diamonds: 30 } },
+  { id: 'ally',     text: 'Join or found an alliance',           test: () => !!S.allianceId, reward: { gold: 1000, diamonds: 15 } },
+];

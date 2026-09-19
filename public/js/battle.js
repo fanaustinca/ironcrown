@@ -294,7 +294,7 @@ const Battles = {
 
   frame(dt) {
     for (const b of this.list) {
-      if (!b.done) { const steps = Math.min(15, Math.max(1, Math.round((dt * UI.gameSpeed) / BDT))); for (let i = 0; i < steps && !b.done; i++) this.tick(b, BDT); }
+      if (!b.done && UI.gameSpeed > 0) { const steps = Math.min(15, Math.max(1, Math.round((dt * UI.gameSpeed) / BDT))); for (let i = 0; i < steps && !b.done; i++) this.tick(b, BDT); }
       else b.linger -= dt;
     }
     const before = this.list.length;

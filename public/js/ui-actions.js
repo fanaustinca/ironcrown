@@ -48,6 +48,8 @@ function showSettings() {
     ${chk('prodNumbers', 'Floating production numbers')}
     ${chk('particles', 'Particles & effects')}
     <div class="setting"><span>Graphics quality</span>${sel('graphics', [['high', '✨ High — realistic textures'], ['medium', '🎨 Classic'], ['low', '🔷 Low-poly (fastest)']])}</div>
+    <div class="setting"><span>Render resolution</span>${sel('resolution', [['sharp', '🔍 Sharp (full screen density)'], ['balanced', '⚖️ Balanced'], ['performance', '⚡ Performance (fastest)']])}</div>
+    <p class="small muted">Lagging? Try ⚡ Performance resolution first — it has the biggest effect on high-DPI / 4K screens.</p>
     <h3>Gameplay</h3>
     <div class="setting"><span>Battles</span>${sel('battleMode', [['watch', '⚔️ Command battles on the map'], ['auto', '⚡ Auto-resolve instantly']])}</div>
     ${chk('focusBattles', 'Move the camera to battles when they start')}
@@ -275,6 +277,7 @@ function bindInput() {
     const t = e.target.closest('[data-action]');
     if (t && !t.disabled && ACTIONS[t.dataset.action]) { ACTIONS[t.dataset.action](t.dataset.arg); UI.panelDirty = true; renderPanel(true); updateHud(); }
     const tab = e.target.closest('[data-tab]'); if (tab) setTab(tab.dataset.tab);
+    const sp = e.target.closest('[data-speed]'); if (sp) setSpeed(+sp.dataset.speed);
     if (e.target === el('modal') && S.started) closeModal();
   });
   el('panel').addEventListener('pointerdown', () => { UI.pointerDown = true; });
@@ -306,6 +309,7 @@ function bindInput() {
     if (d.bform) { const [id, gi] = d.bform.split(':'); const b = Battles.get(+id); if (b) Battles.setFormation(b, +gi, e.target.value); e.target.blur(); }
     if (d.bstance) { const [id, gi] = d.bstance.split(':'); const b = Battles.get(+id); if (b) Battles.setStance(b, +gi, e.target.value); e.target.blur(); }
     if (d.setting === 'graphics') { worldVersion++; UI.lastPanelHtml = ''; }
+    if (d.setting === 'resolution') resize();
   });
   document.addEventListener('keydown', (e) => {
     const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
@@ -321,6 +325,7 @@ function bindInput() {
     if (!el('modal').hidden) return;
     const k = e.key.toLowerCase();
     if (k === '?' || k === 'h') showHelp();
+    if (k === 'p') setSpeed(UI.gameSpeed === 0 ? (UI.lastSpeed || 1) : 0);
     if (k === 'k') setView('kingdom');
     if (k === 'm') setView('world');
     if (k === '+' || k === '=') ACTIONS['zoom-in']();
@@ -460,4 +465,14 @@ function battleGroups(b, gi) {
   if (gi !== 'all') return [b.groups[+gi]].filter(Boolean);
   const pti = Battles.playerTeam(b);
   return b.groups.filter((G) => G.team === pti && Battles.active(b, pti).some((q) => q.g === G.gi));
+}
+
+// Game speed: 0 = paused, 1/2/4 = faster. Battles on the map follow the same clock.
+function setSpeed(x) {
+  if (x > 0) UI.lastSpeed = x;
+  UI.gameSpeed = x;
+  document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('on', +b.dataset.speed === x));
+  let banner = el('paused-banner');
+  if (!banner) { banner = document.createElement('div'); banner.id = 'paused-banner'; banner.className = 'paused-banner'; banner.textContent = '⏸ Paused — press P or ▶ to resume'; el('stage-wrap').appendChild(banner); }
+  banner.hidden = x !== 0;
 }
