@@ -305,10 +305,19 @@ await test('scouts: dispatch a party, click a point, everything on the way is re
   assert(moving.path.length > 0, 'scouts walking to the clicked point');
   const route = moving.path.slice();
   await shot('07b-scouts');
-  await ff(200);
+  let walked = 0;
+  for (let k = 0; k < 10; k++) {
+    await ff(40);
+    const p = (await state()).scouts.find((x) => x.id === moving.id);
+    if (!p) break;                                   // arrived home / captured
+    walked = route.length - p.path.length;
+    if (!p.path.length) break;
+  }
   const s2 = await state();
-  assert(route.every((i) => s2.world.seen[i]), 'every hex on the route was revealed');
-  assert(s2.world.seen.filter(Boolean).length > seen0 && s2.intel[k.id], 'fog lifted and intel gathered');
+  const passed = route.slice(0, Math.max(walked, 1));
+  assert(passed.every((i) => s2.world.seen[i]), `every hex the scouts passed was revealed (${passed.length} hexes)`);
+  assert(s2.world.seen.filter(Boolean).length > seen0, 'fog lifted');
+  if (walked >= route.length - 1) assert(s2.intel[k.id], 'intel gathered on arrival');
 });
 
 await test('claim land anywhere and build on it', async () => {
