@@ -103,7 +103,12 @@ const cheats = {
   time(sec = 600) { window.ironcrown.debug.fastForward(sec); return done(`${sec}s simulated`); },
   speed(x = 1) { UI.gameSpeed = clamp(x, 0, 20); return done(`game speed ×${UI.gameSpeed}`); },
   season(n = 3) { const cal = calendar(); S.time = (Math.floor(S.time / (DAY_LENGTH * 40)) * 40 + n * 10) * DAY_LENGTH + (cal.day - 1) * 0; return done(`season → ${SEASONS[n].name}`); },
-  raid(kid) { const k = S.kingdoms[kid ?? Math.floor(Math.random() * S.kingdoms.length)]; S.shield = 0; launchRaid(k); return done(`${k.name} raids you`); },
+  raid(kid) {
+    const k = kid != null ? S.kingdoms[kid] : pick(S.kingdoms.filter(canReachCapital));
+    if (!k) return done('no kingdom has a land route to you');
+    S.shield = 0;
+    return done(launchRaid(k) ? `${k.name} raids you` : `${k.name} has no land route to you`);
+  },
   pirates() { spawnPirates(); return done('pirates spawned'); },
   peace() { S.kingdoms.forEach((k) => { k.atWar = false; k.relation = 60; }); return done('peace in our time'); },
   war(kid = 0) { DIPLO.war(S.kingdoms[kid]); return done(`war with ${S.kingdoms[kid].name}`); },

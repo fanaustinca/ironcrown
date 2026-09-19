@@ -414,17 +414,19 @@ function piratesAtHarbor(p) {
 }
 
 /* ---------- raids on the player ---------- */
+const canReachCapital = (k) => !!findPath(WG, k.capital, S.world.capital, aiLandCost, 5000);
 function raidCandidates() {
-  return S.kingdoms.filter((k) => !(S.allianceId && k.allianceId === S.allianceId) && k.treaty <= 0 && (k.atWar || k.relation < 0 || k.personality === 'aggressive'));
+  return S.kingdoms.filter((k) => !(S.allianceId && k.allianceId === S.allianceId) && k.treaty <= 0 && (k.atWar || k.relation < 0 || k.personality === 'aggressive') && canReachCapital(k));
 }
 function scheduleRaid() { S.raidTimer = rand(300, 540) / (1 + 0.08 * hallLevel()) * (S.kingdoms.some((k) => k.atWar) ? 0.6 : 1); }
 function launchRaid(k) {
   if (S.shield > 0) { log(`${k.name} considered raiding you but your Peace Shield deters them.`, 'info'); return; }
   const a = spawnAiArmy(k, S.world.capital, 'raid', k.power * rand(0.4, 0.6));
-  if (!a) return;
+  if (!a) return null;
   const eta = etaAi(a);
   log(`⚠️ ${k.name} has sent an army against you! ETA ${fmtTime(eta)}. Intercept it with a division or prepare your defenses.`, 'bad');
   toast(`⚠️ ${k.name} army marching on your capital — ETA ${fmtTime(eta)}`, 'bad');
+  return a;
 }
 function etaAi(a) {
   const sp = Math.min(...COMBAT_UNITS.filter((u) => a.units[u] > 0).map((u) => UNITS[u].speed), 1.2);
