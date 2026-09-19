@@ -458,13 +458,14 @@ function launchRaid(k, forceHex) {
   if (S.shield > 0) { log(`${k.name} considered raiding you but your Peace Shield deters them.`, 'info'); return null; }
   const w = raidTargets(k);
   let a = null;
-  for (let tries = 0; tries < 5 && !a; tries++) {
+  for (let tries = 0; tries < 12 && !a; tries++) {
     const hex = forceHex ?? +weighted(w);
     if (hex == null || isNaN(hex)) break;
     a = spawnAiArmy(k, hex, 'raid', k.power * rand(0.35, 0.55));
     if (a) a.targetHex = hex; else delete w[hex];
     if (forceHex != null) break;
   }
+  if (!a && forceHex == null) { a = spawnAiArmy(k, S.world.capital, 'raid', k.power * rand(0.35, 0.55)); if (a) a.targetHex = S.world.capital; }  // fall back to the capital
   if (!a) return null;
   const eta = etaAi(a), capital = a.targetHex === S.world.capital;
   const where = capital ? 'your capital' : `${TERRAIN[S.world.terrain[a.targetHex]].name} ${hexName(a.targetHex)}${isDefended(a.targetHex) ? '' : ' (undefended!)'}`;

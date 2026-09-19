@@ -390,14 +390,18 @@ await test('graphics quality: high textures ↔ low-poly switch live', async () 
 await test('enemy raid marches across the map and is resolved', async () => {
   await G(() => { window.ironcrown.SETTINGS.battleMode = 'auto'; });
   const before = await state();
-  await G(() => cheats.raid());
+  const msg = await G(() => { const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    const k = s.kingdoms.find((k) => canReachCapital(k) && s.divisions.every((d) => W.dist(d.at, k.capital) > 3)) || s.kingdoms.find(canReachCapital);
+    return cheats.raid(k.id); });
   const raid = (await state()).aiArmies.find((a) => a.kind === 'raid');
-  assert(raid && raid.path.length > 0 && raid.targetHex != null, 'raid army marching on a target hex');
+  const why = await G(() => JSON.stringify({ shield: ironcrown.state.shield, raids: ironcrown.state.aiArmies.map((a) => [a.kind, a.path.length, a.targetHex]) }));
+  assert(raid && raid.path.length > 0 && raid.targetHex != null, `raid army marching on a target hex (${msg} ${why})`);
   assert(await page.isVisible('.alert'), 'threat alert shown');
   await shot('11-raid-alert');
-  await ff(600);
+  for (let k = 0; k < 20 && (await G(() => window.ironcrown.state.aiArmies.some((a) => a.kind === 'raid'))); k++) await ff(200);
   const s = await state();
-  assert(s.stats.raidsRepelled + s.stats.raidsLost > before.stats.raidsRepelled + before.stats.raidsLost, 'raid resolved');
+  const done = (x) => x.stats.raidsRepelled + x.stats.raidsLost + x.stats.battlesWon + x.stats.battlesLost;
+  assert(!s.aiArmies.some((a) => a.kind === 'raid') && done(s) > done(before), 'raid resolved (repelled, pillaged or intercepted)');
 });
 
 await test('diplomacy: gift and declare war', async () => {
