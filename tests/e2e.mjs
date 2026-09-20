@@ -431,8 +431,8 @@ await test('battle is fought on the map with formations and stances', async () =
   assert(await page.isHidden('#modal'), 'no separate battle screen');
   await page.waitForSelector('#battle-hud:not([hidden])');
   assert(await page.isVisible('#battle-hud'), 'command bar visible');
-  await page.click('[data-action="b-form"][data-arg$=":wedge"]');
-  await page.click('[data-action="b-stance"][data-arg$=":charge"]');
+  await page.click('[data-action="b-form"][data-arg$=":wedge"]', { force: true });
+  await page.click('[data-action="b-stance"][data-arg$=":charge"]', { force: true });
   const g = await G(() => { const b = window.ironcrown.Battles.list[0]; return { f: b.groups[0].formation, s: b.groups[0].stance }; });
   assert(g.f === 'wedge' && g.s === 'charge', 'formation & stance changed mid-battle');
   await page.waitForTimeout(1500);

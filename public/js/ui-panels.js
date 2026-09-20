@@ -108,8 +108,13 @@ function renderBattleHud() {
   const cnt = (ti) => Battles.active(b, ti).reduce((a, u) => a + Math.ceil(u.hp / u.unitHp), 0);
   const pti = Math.max(0, Battles.playerTeam(b));
   const tabs = live.length > 1 ? `<div class="bh-tabs">${live.map((x) => `<button class="${x === b ? 'active' : ''}" data-action="b-tab" data-arg="${x.id}">⚔️ ${esc(x.cfg.title.slice(0, 26))}</button>`).join('')}</div>` : '';
-  let h = tabs + `<div class="bh-head"><b>${esc(b.cfg.title)}</b><span class="muted">${b.done ? (b.result.win ? '🏆 Victory' : '💀 Defeat') : fmtTime(BATTLE_LIMIT - b.t)}</span>
-    <span class="bh-count">${b.teams.map((T, ti) => `<span style="color:${T.color === '#222' ? '#ccc' : T.color}" title="${esc(T.name)}">${cnt(ti)}${b.towers.some((x) => x.team === ti && !x.dead) ? ' 🗼' + b.towers.filter((x) => x.team === ti && !x.dead).length : ''}</span>`).join(' vs ')}</span>
+  // The clock and the head-counts change every second. They live in their own
+  // nodes and are patched in place, so the controls underneath are never torn
+  // down and rebuilt under the player's cursor mid-click.
+  const clock = b.done ? (b.result.win ? '🏆 Victory' : '💀 Defeat') : fmtTime(BATTLE_LIMIT - b.t);
+  const counts = b.teams.map((T, ti) => `<span style="color:${T.color === '#222' ? '#ccc' : T.color}" title="${esc(T.name)}">${cnt(ti)}${b.towers.some((x) => x.team === ti && !x.dead) ? ' 🗼' + b.towers.filter((x) => x.team === ti && !x.dead).length : ''}</span>`).join(' vs ');
+  let h = tabs + `<div class="bh-head"><b>${esc(b.cfg.title)}</b><span class="muted" id="bh-clock"></span>
+    <span class="bh-count" id="bh-counts"></span>
     <span class="spacer"></span>${btn('🎯', 'b-focus', b.id, { cls: 'sm ghost', title: 'Center camera' })}${b.done ? '' : btn('⏭ Auto-resolve', 'b-resolve', b.id, { cls: 'sm ghost' })}</div>`;
   if (!b.done) {
     const mine = b.groups.filter((G) => G.team === pti && !G.ally && b.teams[pti] && b.teams[pti].player && Battles.active(b, pti).some((q) => q.g === G.gi));
@@ -130,6 +135,9 @@ function renderBattleHud() {
     h += `<div class="bh-row small muted">${b.teams.length > 2 ? `⚔️ ${b.teams.length}-way battle · ` : ''}${others.map((T) => { const gs = b.groups.filter((G) => b.teams[G.team] === T); return `<span style="color:${T.color === '#222' ? '#ccc' : T.color}">${esc(T.name)}</span> ${gs.length > 1 ? `(${gs.length} armies)` : ''}: ${gs[0] ? FORMATIONS[gs[0].formation].icon + ' ' + FORMATIONS[gs[0].formation].name : 'towers'}`; }).join(' &nbsp;|&nbsp; ')}</div>`;
   }
   if (box.dataset.html !== h && !UI.hudPointer && !(document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT')) { box.innerHTML = h; box.dataset.html = h; }
+  const ec = el('bh-clock'), en = el('bh-counts');
+  if (ec) ec.textContent = clock;
+  if (en && en.dataset.v !== counts) { en.innerHTML = counts; en.dataset.v = counts; }
   box.hidden = false;
 }
 
