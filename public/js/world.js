@@ -156,31 +156,51 @@ const playerTiles = () => S.world.owner.reduce((s, o) => s + (o === -2 ? 1 : 0),
 const kingdomTiles = (id) => S.world.owner.reduce((s, o) => s + (o === id ? 1 : 0), 0);
 const visionBonus = () => R('cartography');
 
-function distToTerritory(i) {
-  let best = 999;
-  const { owner } = S.world;
-  for (let j = 0; j < owner.length; j++) if (owner[j] === -2) { const d = WG.dist(i, j); if (d < best) best = d; }
-  return best;
+// Distance from every hex to your nearest owned hex, rebuilt only when the map changes.
+let terrDist = null, terrDistVer = -1;
+function territoryField() {
+  if (terrDistVer !== worldVersion || !terrDist) { terrDist = WG.distanceField((j) => S.world.owner[j] === -2, 40); terrDistVer = worldVersion; }
+  return terrDist;
 }
-// Claiming takes the clicked hex plus its neutral neighbours (a small piece of land).
-function claimCluster(i) {
-  return [i].concat(WG.neighbors(i)).filter((j) => S.world.owner[j] === -1 && isPassable(j) && isSeen(j) && !(S.world.feat[j] && ['fort', 'ruins', 'cove'].includes(S.world.feat[j].type) && !(S.world.feat[j].captured || S.world.feat[j].looted || S.world.feat[j].destroyed)));
+function distToTerritory(i) { return territoryField()[i]; }
+
+/* ---- Expansion: settling neutral land ----
+   Most of the world is unclaimed. Settlers will walk a few hexes past your
+   border into land nobody has scouted yet, and a claim takes a whole region
+   (radius grows with the Main Hall) so an empire can actually spread. */
+const featBlocks = (j) => { const f = S.world.feat[j]; return !!f && ['fort', 'ruins', 'cove'].includes(f.type) && !(f.captured || f.looted || f.destroyed); };
+const settleReach = () => 3 + 2 * R('cartography');
+const canSettle = (i) => isSeen(i) || distToTerritory(i) <= settleReach();
+const settleable = (j) => j >= 0 && S.world.owner[j] === -1 && isPassable(j) && !featBlocks(j) && canSettle(j);
+const settleRadius = () => clamp(1 + Math.floor(hallLevel() / 2), 1, 6);
+// Claiming takes the clicked hex plus every neutral hex connected to it within `r` rings.
+function claimCluster(i, r = 1) {
+  r = clamp(Math.round(r) || 1, 1, settleRadius());
+  if (!settleable(i)) return [];
+  const out = [i], done = new Set([i]);
+  for (let h = 0; h < out.length; h++) for (const n of WG.neighbors(out[h])) {
+    if (done.has(n)) continue;
+    done.add(n);
+    if (WG.dist(n, i) <= r && settleable(n)) out.push(n);
+  }
+  return out;
 }
 // Price of settling a single hex (used when you build on unclaimed land).
+// Upkeep of a sprawling realm: gentle and sub-linear, so the far side of the map stays reachable.
+const empireMult = () => 1 + Math.max(0, playerTiles() - 60) / 1200;
 function hexClaimCost(i) {
-  const n = Math.max(0, playerTiles() - 60), far = Math.max(0, distToTerritory(i) - 1);
-  const m = (1 + 0.06 * far) * Math.pow(1.004, n) * (1 - 0.15 * R('administration'));
+  const far = Math.max(0, distToTerritory(i) - 1);
+  const m = (1 + 0.06 * far) * empireMult() * (1 - 0.15 * R('administration'));
   return { gold: Math.round(28 * m), food: Math.round(14 * m) };
 }
-function claimCost(i) {
-  const n = Math.max(0, playerTiles() - 60), far = i != null ? Math.max(0, distToTerritory(i) - 1) : 0;
-  const hexes = i != null ? Math.max(1, claimCluster(i).length) : 7;
-  const m = (1 + 0.06 * far) * Math.pow(1.004, n) * hexes;
+function claimCost(i, r = 1) {
+  const far = i != null ? Math.max(0, distToTerritory(i) - 1) : 0;
+  const hexes = i != null ? Math.max(1, claimCluster(i, r).length) : 7;
+  const m = (1 + 0.06 * far) * empireMult() * hexes * (1 - 0.15 * R('administration'));
   return { gold: Math.round((28 * m) / 5) * 5, food: Math.round((14 * m) / 5) * 5 };
 }
-function claimError(i) {
+function claimError(i, r = 1) {
   const { terrain, owner } = S.world;
-  if (!isSeen(i)) return 'Explore this land first (scouts, fleets or divisions)';
   if (terrain[i] === T.WATER) return 'You cannot claim the open sea';
   if (terrain[i] === T.MOUNTAIN) return 'Mountains cannot be settled';
   if (owner[i] === -2) return 'Already yours';
@@ -189,19 +209,24 @@ function claimError(i) {
   if (f && f.type === 'fort' && !f.captured) return 'Capture the fort with a division';
   if (f && f.type === 'ruins' && !f.looted) return 'Explore the ruins with a division first';
   if (f && f.type === 'cove' && !f.destroyed) return 'Destroy the pirate cove first';
-  if (!canAfford(claimCost(i))) return 'Not enough resources';
+  if (!canSettle(i)) return `Too far beyond your borders — scout it, march a division there, or settle closer first (reach ${settleReach()} hexes)`;
+  if (!canAfford(claimCost(i, r))) return 'Not enough resources';
   return null;
 }
-function claimTile(i) {
-  const err = claimError(i);
+// Settle a region. Anything the settlers take is revealed — they walked it.
+function claimTile(i, r = 1, free) {
+  const err = claimError(i, r);
   if (err) { toast(err, 'bad'); return false; }
-  const cl = claimCluster(i);
-  pay(claimCost(i));
-  for (const j of cl) S.world.owner[j] = -2;
-  reveal(i, 3);
+  const cl = claimCluster(i, r);
+  if (!cl.length) { toast('Nothing to settle here', 'bad'); return false; }
+  if (!free) pay(claimCost(i, r));
+  for (const j of cl) { S.world.owner[j] = -2; if (!S.world.seen[j]) { S.world.seen[j] = 1; seenCount++; } }
+  fogDirty = true;
+  reveal(i, 2);
   log(`Claimed ${cl.length} hexes of ${TERRAIN[S.world.terrain[i]].name} at ${hexName(i)}.`, 'good');
   toast(`🏳️ ${cl.length} hexes claimed!`, 'good');
   worldVersion++;
+  for (const j of cl) markChunks(j);
   UI.panelDirty = true;
   return true;
 }

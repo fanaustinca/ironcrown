@@ -106,7 +106,7 @@ function placementError(type, i) {
   if (S.world.terrain[i] === T.WATER) return 'You cannot build on water';
   if (S.world.terrain[i] === T.MOUNTAIN) return 'Mountains are too steep to build on';
   if (S.world.owner[i] >= 0) return `This land belongs to ${S.kingdoms[S.world.owner[i]].name}`;
-  if (S.world.owner[i] === -1 && !isSeen(i)) return 'Explore this land first';
+  if (S.world.owner[i] === -1 && !canSettle(i)) return 'Too far beyond your borders — scout it or settle closer first';
   if (i === capHex() || isPlaza(i)) return 'The plaza around the Main Hall must stay clear';
   if (buildingAt(i)) return 'Hex occupied';
   const o = obstacleAt(i);

@@ -63,8 +63,10 @@ function drawCityLayer(g, t, dt, vis) {
   const sel = S.buildings.find((b) => b.id === UI.selected);
   if (sel) { g.strokeStyle = `rgba(242,193,78,${0.6 + 0.4 * Math.sin(t * 5)})`; g.lineWidth = 3 / z; g.beginPath(); WG.hexPath(g, sel.hex, sel.type === 'hall' ? 1.9 : 0.95); g.stroke(); }
   // buildings (yours + AI cities), depth-sorted; tiny dots when zoomed far out
-  const list = S.buildings.filter((b) => visSet.has(b.hex) || (b.type === 'hall' && vis.length));
-  for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) if (visSet.has(b.hex)) list.push(b);
+  const fighting = Battles.list.length ? Battles.towerHexes() : null;   // those are drawn by the battle instead
+  const shown = (b) => visSet.has(b.hex) && !(fighting && fighting.has(b.hex) && DEF_TYPES.includes(b.type));
+  const list = S.buildings.filter((b) => shown(b) || (b.type === 'hall' && vis.length));
+  for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) if (shown(b)) list.push(b);
   list.sort((a, b) => WG.cy[a.hex] - WG.cy[b.hex]);
   for (const b of list) {
     if (!detail && b.type !== 'hall') { g.fillStyle = b.color ? b.color : CAT_DOT[BUILDINGS[b.type].cat]; g.fillRect(WG.cx[b.hex] - 2.5, WG.cy[b.hex] - 2.5, 5, 5); continue; }

@@ -341,8 +341,14 @@ function drawWorld(g, t, dt) {
   };
   for (const e of S.divisions.concat(S.fleets)) pathLine(e, e === selE ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)', [6, 6]);
   for (const p of S.scouts) pathLine(p, p === selE ? 'rgba(127,212,255,.95)' : 'rgba(127,212,255,.4)', [3, 5]);
-  // guard rings: idle divisions protect their hex and its neighbours
-  for (const d of S.divisions) if (!d.path.length && d.at !== S.world.capital) { g.strokeStyle = 'rgba(242,193,78,.28)'; g.lineWidth = 2 / z; g.setLineDash([3 / z, 4 / z]); g.beginPath(); g.arc(WG.cx[d.at], WG.cy[d.at], W_HEX * SQ3 * 2.2, 0, 7); g.stroke(); g.setLineDash([]); }
+  // detection rings: an army attacks any enemy that walks inside this circle
+  for (const d of S.divisions) {
+    if (d.status === 'fighting') continue;
+    const idle = !d.path.length, sel = d === selE, [rx, ry] = entPos(d);
+    g.strokeStyle = sel ? 'rgba(242,193,78,.7)' : 'rgba(242,193,78,.24)';
+    g.lineWidth = (sel ? 2.5 : 2) / z; g.setLineDash([3 / z, 4 / z]);
+    g.beginPath(); g.arc(rx, ry, detectRange(d, idle) * W_HEX * SQ3 * 1.04, 0, 7); g.stroke(); g.setLineDash([]);
+  }
   for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) pathLine(a, 'rgba(229,83,75,.8)', [4, 6]);
   for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3 / z; g.beginPath(); WG.hexPath(g, a.targetHex, 1.3); g.stroke(); }
   // scout parties

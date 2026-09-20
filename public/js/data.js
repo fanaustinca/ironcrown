@@ -5,7 +5,7 @@
    ========================================================================== */
 'use strict';
 
-const GAME_VERSION = '3.2.0';
+const GAME_VERSION = '3.3.0';
 const SAVE_VERSION = 3;
 
 // ONE map made of small hexes (pointy-top, odd-r offset). Cities, land, sea,
@@ -57,13 +57,13 @@ const BUILDINGS = {
                  desc: '+20% storage capacity per level.' },
   wall:        { name: 'Wall', icon: '🧱', cat: 'defense', def: 10, base: { lumber: 25, iron: 5 }, mult: 1.6, time: 1, limit: [14,24,34,44,54,64],
                  desc: 'Stone segments that link up with neighbours. Drag to paint a line of walls.' },
-  tower:       { name: 'Archer Tower', icon: '🗼', cat: 'defense', def: 45, base: { gold: 150, lumber: 120 }, mult: 1.8, time: 6, limit: [1,2,3,4,5,6],
+  tower:       { name: 'Archer Tower', icon: '🗼', cat: 'defense', def: 45, base: { gold: 150, lumber: 120 }, mult: 1.8, time: 6, limit: [2,5,8,12,16,20],
                  desc: 'Rains arrows on raiders within 3 hexes and watches the land around it.', vision: 6 },
-  cannon:      { name: 'Cannon', icon: '💣', cat: 'defense', def: 95, base: { gold: 400, iron: 250 }, mult: 1.8, time: 8, hall: 3, limit: [0,0,1,2,3,4],
+  cannon:      { name: 'Cannon', icon: '💣', cat: 'defense', def: 95, base: { gold: 400, iron: 250 }, mult: 1.8, time: 8, hall: 3, limit: [0,0,2,4,7,10],
                  desc: 'Heavy iron cannon — devastating against massed troops.' },
-  fortress:    { name: 'Fortress', icon: '🏯', cat: 'defense', def: 150, base: { gold: 600, lumber: 400, iron: 250 }, mult: 1.8, time: 12, hall: 2, limit: [0,1,2,3,4,5],
-                 desc: 'Walled stronghold. Its towers join any battle within 3 hexes — perfect for guarding far-off land.' },
-  spire:       { name: 'Arcane Spire', icon: '🔮', cat: 'defense', def: 220, base: { gold: 1500, iron: 600, diamonds: 40 }, mult: 1.9, time: 12, hall: 5, limit: [0,0,0,0,1,2],
+  fortress:    { name: 'Fortress', icon: '🏯', cat: 'defense', def: 150, base: { gold: 600, lumber: 400, iron: 250 }, mult: 1.8, time: 12, hall: 2, limit: [0,2,3,5,7,9],
+                 desc: 'Walled stronghold. Its two turrets join any battle within 3 hexes — perfect for guarding far-off land.' },
+  spire:       { name: 'Arcane Spire', icon: '🔮', cat: 'defense', def: 220, base: { gold: 1500, iron: 600, diamonds: 40 }, mult: 1.9, time: 12, hall: 5, limit: [0,0,0,0,2,4],
                  desc: 'Crackling crystal spire, the strongest defense in the realm.' },
   archery:     { name: 'Archery Range', icon: '🏹', cat: 'military', trains: ['archer'], base: { gold: 120, lumber: 150 }, mult: 1.8, time: 5, limit: [1,1,1,1,1,1],
                  desc: 'Trains Archers. Level raises archer stats.' },
@@ -84,7 +84,7 @@ const BUILDINGS = {
 };
 const BUILD_ORDER = ['goldmine','ironmine','diamondmine','lumbermill','farm','village','warehouse','wall','tower','fortress','cannon','spire','archery','barracks','stable','workshop','scoutlodge','port','shipyard','university'];
 // Past Main Hall 6 the limits keep growing by this much per hall level.
-const LIMIT_GROW = { goldmine: 1, ironmine: 1, diamondmine: 0.5, lumbermill: 1, farm: 1, village: 1, warehouse: 0.5, wall: 10, tower: 1, fortress: 1, cannon: 1, spire: 0.5, port: 0.34, shipyard: 0.5, university: 0.5 };
+const LIMIT_GROW = { goldmine: 1, ironmine: 1, diamondmine: 0.5, lumbermill: 1, farm: 1, village: 1, warehouse: 0.5, wall: 10, tower: 4, fortress: 2, cannon: 3, spire: 2, port: 0.34, shipyard: 0.5, university: 0.5 };
 // Terrain that makes a building more productive when built on it.
 const TERRAIN_BOOST = { goldmine: { 4: 1.5, goldvein: 2 }, ironmine: { 4: 1.6 }, diamondmine: { gems: 2.5 }, lumbermill: { 3: 1.6 }, farm: { 1: 1.3, 2: 1.35 }, village: { 2: 1.2, 1: 1.1 } };
 const CAT_NAMES = { resource: 'Economy', defense: 'Defenses', military: 'Military', naval: 'Naval', civic: 'Learning', core: 'Kingdom' };
@@ -244,6 +244,15 @@ const STANCES = {
   retreat: { name: 'Retreat', icon: '↩️', desc: 'Fall back off the field; escaped troops survive.' },
 };
 const TARGETS = { nearest: 'Nearest', weakest: 'Weakest', ranged: 'Archers & siege', cavalry: 'Cavalry', towers: 'Towers' };
+/* Every defensive building fights as itself: an Archer Tower shoots arrows, a Cannon
+   lobs iron, a Fortress mans two turrets, a Spire throws arcane bolts. `siege` towers
+   prefer to duel other towers. */
+const TOWER_STATS = {
+  tower:    { hp: 300, atk: 20, range: 175, rate: 1.25, shot: 'arrow' },
+  cannon:   { hp: 400, atk: 62, range: 250, rate: 2.4,  shot: 'ball',  splash: true, siege: true },
+  fortress: { hp: 750, atk: 26, range: 195, rate: 1.15, shot: 'arrow', count: 2 },
+  spire:    { hp: 600, atk: 80, range: 265, rate: 1.9,  shot: 'bolt',  siege: true },
+};
 
 /* ---- Objectives: a guided path through the game's systems (rewards on completion) ---- */
 const OBJECTIVES = [

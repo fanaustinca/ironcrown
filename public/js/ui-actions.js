@@ -166,7 +166,7 @@ const ACTIONS = {
   'focus-entity'() { const e = selectedEntity(); if (e) CAM.centerOn(e.at); },
   'select-entity'(arg) { const [k, id] = arg.split(':'); selectEntity(k, id); },
   'deselect-entity'() { UI.selEntity = null; },
-  claim(i) { claimTile(+i); },
+  claim(arg) { const [i, r] = String(arg).split(':'); claimTile(+i, +r || UI.claimRadius || 1); },
   'scout-here'(i) { const p = dispatchScouts(+(el('scout-count') ? el('scout-count').value : 1), +i); if (p) { UI.selEntity = { kind: 'scout', id: p.id }; toast(`🔭 Scouts heading to ${hexName(+i)} (ETA ${fmtTime(etaOf(p))})`); } },
   'dispatch-scouts'() {
     const p = dispatchScouts(+(el('scout-dispatch') ? el('scout-dispatch').value : 1));
@@ -305,6 +305,7 @@ function bindInput() {
       toast(`${generalData(uidv).name} now leads ${div.name}`, 'good'); e.target.blur(); UI.panelDirty = true; renderPanel(true);
     }
     for (const [attr, field] of [['entform', 'formation'], ['entstance', 'stance'], ['enttarget', 'target']]) if (d[attr]) { const ent = findEnt(d[attr]); if (ent) ent[field] = e.target.value; e.target.blur(); }
+    if (d.claimradius) { UI.claimRadius = +e.target.value; UI.panelDirty = true; renderPanel(true); return; }
     if (d.btarget) { const [id, gi] = d.btarget.split(':'); const b = Battles.get(+id); if (b) Battles.setTarget(b, +gi, e.target.value); e.target.blur(); }
     if (d.bform) { const [id, gi] = d.bform.split(':'); const b = Battles.get(+id); if (b) Battles.setFormation(b, +gi, e.target.value); e.target.blur(); }
     if (d.bstance) { const [id, gi] = d.bstance.split(':'); const b = Battles.get(+id); if (b) Battles.setStance(b, +gi, e.target.value); e.target.blur(); }
@@ -464,7 +465,7 @@ function inputFrame(dt) {
 function battleGroups(b, gi) {
   if (gi !== 'all') return [b.groups[+gi]].filter(Boolean);
   const pti = Battles.playerTeam(b);
-  return b.groups.filter((G) => G.team === pti && Battles.active(b, pti).some((q) => q.g === G.gi));
+  return b.groups.filter((G) => G.team === pti && !G.ally && Battles.active(b, pti).some((q) => q.g === G.gi));
 }
 
 // Game speed: 0 = paused, 1/2/4 = faster. Battles on the map follow the same clock.

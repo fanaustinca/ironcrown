@@ -6,9 +6,11 @@
    a formation; the player commands their own groups live.
 
    cfg = { kind: 'land'|'naval', title, hex, holder?: teamId (wins on timeout), onEnd(r),
-           teams: [{ id, name, color, player?, pirate?, groups: [{ key, name, units, stats, formation, stance, target, ref }],
-                     towers?, towerHall?, towerHp? }],
+           teams: [{ id, name, color, player?, pirate?, groups: [{ key, name, units, stats, formation, stance, target, ref, ally? }],
+                     towers?: [{ type, level, hex?, hpMult?, res? }] }],
            hostile(idA, idB) → bool }
+   Towers are the real buildings standing on the map: each one keeps its type and its
+   hex, so a battle is fought across the actual landscape and towers can duel towers.
    r   = { win, teams: { [id]: { alive, groups: [{ key, survivors }], towersLeft, towersStart } } }
    ========================================================================== */
 'use strict';
@@ -53,6 +55,35 @@ function aiFormation(mine, theirs) {
 }
 const rot = (dx, dy, th) => [dx * Math.cos(th) - dy * Math.sin(th), dx * Math.sin(th) + dy * Math.cos(th)];
 
+/* ---- towers ----
+   A team's `towers` is a list of the real buildings defending the place. A Fortress
+   mans two turrets; anything with a `hex` is placed at that hex's true spot on the
+   map, so the fight happens across the landscape as it actually stands. */
+function towerSpecs(T) {
+  const src = Array.isArray(T.towers) ? T.towers : Array.from({ length: T.towers || 0 }, () => ({ type: 'tower', level: T.towerHall || 1, hpMult: T.towerHp }));
+  const out = [];
+  for (const sp of src) {
+    const st = TOWER_STATS[sp.type] || TOWER_STATS.tower;
+    for (let k = 0; k < (st.count || 1); k++) out.push({ ...sp, type: TOWER_STATS[sp.type] ? sp.type : 'tower', turret: k });
+  }
+  return out;
+}
+// Battlefield coordinates for each tower, spread out when several share a hex.
+function towerPlaces(cfg, specs) {
+  const byHex = new Map();
+  for (const sp of specs) { const k = sp.hex == null ? 'x' : sp.hex; if (!byHex.has(k)) byHex.set(k, []); byHex.get(k).push(sp); }
+  const out = [];
+  for (const [k, list] of byHex) {
+    if (k === 'x' || cfg.hex == null) { for (const sp of list) out.push({ spec: sp, x: BW / 2, y: BH / 2, real: false }); continue; }
+    const cx = BW / 2 + (WG.cx[k] - WG.cx[cfg.hex]) / BSC, cy = BH / 2 + (WG.cy[k] - WG.cy[cfg.hex]) / BSC;
+    list.forEach((sp, i) => {
+      const a = (i / Math.max(1, list.length)) * Math.PI * 2 + hash2(k, 5) * 6.283, rr = list.length > 1 ? 16 : 0;
+      out.push({ spec: sp, x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr, real: true });
+    });
+  }
+  return out;
+}
+
 const Battles = {
   list: [], focus: null, nextId: 1,
 
@@ -75,16 +106,34 @@ const Battles = {
     const naval = cfg.kind === 'naval', table = naval ? SHIPS : UNITS;
     const usable = (u) => Object.keys(u).some((k) => table[k] && u[k] > 0 && k !== 'scout' && k !== 'seaman');
     // player team first so it takes the left side
-    const teams = cfg.teams.map((t) => ({ ...t, groups: t.groups.filter((g) => usable(g.units)) })).filter((t) => t.groups.length || t.towers)
+    const teams = cfg.teams.map((t) => ({ ...t, towers: towerSpecs(t), groups: t.groups.filter((g) => usable(g.units)) })).filter((t) => t.groups.length || t.towers.length)
       .sort((a, c) => (c.player ? 1 : 0) - (a.player ? 1 : 0));
     const b = { id: this.nextId++, cfg, naval, t: 0, units: [], towers: [], shots: [], fx: [], groups: [], teams, done: false, result: null, linger: 3 };
     const n = Math.min(4, teams.length), spots = TEAM_SPOTS[Math.max(1, n)] || TEAM_SPOTS[4];
     b.H = teams.map((a, i) => teams.map((c, j) => i !== j && !!cfg.hostile(a.id, c.id)));
-    // Hostile-to-all-others teams get the facing towards the middle.
-    teams.forEach((T, ti) => {
-      const [tx, ty] = spots[Math.min(ti, spots.length - 1)];
-      T.ax = tx; T.ay = ty; T.face = Math.atan2(BH / 2 - ty, BW / 2 - tx) || 0;
+    // Towers stand where their buildings stand on the map; a side that has them forms up among them.
+    for (const T of teams) T.towerPos = towerPlaces(cfg, T.towers);
+    const anchored = [], pool = spots.slice();
+    for (const T of teams) {
+      if (!T.towerPos.length) continue;
+      T.ax = clamp(T.towerPos.reduce((a, p) => a + p.x, 0) / T.towerPos.length, 130, BW - 130);
+      T.ay = clamp(T.towerPos.reduce((a, p) => a + p.y, 0) / T.towerPos.length, 120, BH - 120);
+      anchored.push(T);
+    }
+    for (const T of teams) {          // everyone else marches in from the side furthest away
+      if (T.towerPos.length) continue;
+      let bk = 0, bs = -1;
+      pool.forEach(([x, y], k) => { const sc = anchored.length ? Math.min(...anchored.map((o) => dist(x, y, o.ax, o.ay))) : 1e9 - k; if (sc > bs) { bs = sc; bk = k; } });
+      const [x, y] = pool.splice(bk, 1)[0] || [BW / 2, BH / 2];
+      T.ax = x; T.ay = y; anchored.push(T);
+    }
+    teams.forEach((T, ti) => {        // each side faces the enemies it can see
+      let hx = 0, hy = 0, c = 0;
+      teams.forEach((o, oi) => { if (b.H[ti][oi]) { hx += o.ax; hy += o.ay; c++; } });
+      T.face = (c ? Math.atan2(hy / c - T.ay, hx / c - T.ax) : Math.atan2(BH / 2 - T.ay, BW / 2 - T.ax)) || 0;
       if (n === 1) T.face = 0;
+    });
+    teams.forEach((T, ti) => {
       const perp = T.face + Math.PI / 2, G = T.groups.length, spacing = Math.min(150, (BH - 120) / Math.max(1, G));
       const allFoe = {};
       teams.forEach((o, oi) => { if (b.H[ti][oi]) o.groups.forEach((g) => { for (const [k, v] of Object.entries(g.units)) allFoe[k] = (allFoe[k] || 0) + v; }); });
@@ -92,8 +141,9 @@ const Battles = {
       const gsz = Math.max(1, Math.ceil(total / 64));
       T.groups.forEach((sp, gidx) => {
         const off = (gidx - (G - 1) / 2) * spacing;
-        const Gr = { gi: b.groups.length, team: ti, key: sp.key, name: sp.name, ref: sp.ref || null,
-          formation: sp.formation || (T.player ? 'line' : aiFormation(sp.units, allFoe)), stance: sp.stance || (T.towers ? 'hold' : 'advance'), target: sp.target || 'nearest',
+        const mine = T.player && !sp.ally;
+        const Gr = { gi: b.groups.length, team: ti, key: sp.key, name: sp.name, ref: sp.ref || null, ally: !!sp.ally,
+          formation: sp.formation || (mine ? 'line' : aiFormation(sp.units, allFoe)), stance: sp.stance || (T.towerPos.length ? 'hold' : 'advance'), target: sp.target || 'nearest',
           ax: T.ax + Math.cos(perp) * off, ay: T.ay + Math.sin(perp) * off, face: T.face, start: {} };
         const squads = [];
         for (const k of Object.keys(sp.units)) {
@@ -112,15 +162,17 @@ const Battles = {
         b.units.push(...squads);
         b.groups.push(Gr);
       });
-      const nt = T.towers || 0, th = T.towerHall || 1;
-      for (let i = 0; i < nt; i++) {
-        const back = 95, spread = nt > 1 ? (i / (nt - 1) - 0.5) * (BH - 180) : 0;
-        const x = T.ax - Math.cos(T.face) * back + Math.cos(perp) * spread, y = T.ay - Math.sin(T.face) * back + Math.sin(perp) * spread;
-        const hp = (260 + th * 70) * (T.towerHp || 1) * (T.player ? 1 + 0.12 * R('fortification') : 1);
-        b.towers.push({ team: ti, tower: true, x: clamp(x, 30, BW - 30), y: clamp(y, 60, BH - 20), hp, max: hp, atk: (10 + th * 3.5) * (T.player ? 1 + 0.12 * R('fortification') : 1),
-          range: 170, cd: Math.random(), cannon: th >= 3 && i % 2 === 1, dead: false, r: 16 });
-      }
-      T.towersStart = nt;
+      T.towerPos.forEach((p, i) => {
+        const sp = p.spec, st = TOWER_STATS[sp.type] || TOWER_STATS.tower, lvl = Math.max(1, sp.level || 1);
+        const forti = T.player ? 1 + 0.12 * R('fortification') : 1;
+        const hp = st.hp * (1 + 0.35 * (lvl - 1)) * (sp.hpMult || 1) * forti;
+        let x = p.x, y = p.y;
+        if (!p.real) { const back = 95, spread = T.towerPos.length > 1 ? (i / (T.towerPos.length - 1) - 0.5) * (BH - 180) : 0; x = T.ax - Math.cos(T.face) * back + Math.cos(perp) * spread; y = T.ay - Math.sin(T.face) * back + Math.sin(perp) * spread; }
+        b.towers.push({ team: ti, tower: true, type: sp.type, level: lvl, hex: sp.hex, real: p.real, x: clamp(x, 24, BW - 24), y: clamp(y, 50, BH - 16),
+          hp, max: hp, atk: st.atk * (1 + 0.3 * (lvl - 1)) * forti, range: st.range, rate: st.rate, shot: st.shot, splash: !!st.splash, siege: !!st.siege,
+          cd: Math.random(), cannon: st.shot !== 'arrow', dead: false, r: 16 });
+      });
+      T.towersStart = T.towerPos.length;
     });
     for (const G of b.groups) if (G.ref) G.ref.status = 'fighting';
     return b;
@@ -231,9 +283,21 @@ const Battles = {
       if (tw.dead) continue;
       tw.cd -= dt;
       if (tw.cd > 0) continue;
-      let best = null, bd = tw.range;
-      for (const e of all) if (!e.dead && !e.escaped && b.H[tw.team][e.team]) { const d = dist(tw.x, tw.y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
-      if (best) { tw.cd = tw.cannon ? 2.2 : 1.3; b.shots.push({ x: tw.x, y: tw.y - 30, t: best, dmg: tw.atk * (tw.cannon ? 3.2 : 1.6) * (1 + 0.03 * Math.min(20, best.count)) * FORMATIONS[b.groups[best.g].formation].takeRanged, v: tw.cannon ? 300 : 460, kind: tw.cannon ? 'ball' : 'arrow', team: tw.team, splash: tw.cannon }); }
+      // Towers shoot at whatever is in range — enemy troops, and enemy towers. Cannons and
+      // spires prefer to knock the other side's stonework down first.
+      let best = null, bs = 1e9;
+      for (const e of all) { if (e.dead || e.escaped || !b.H[tw.team][e.team]) continue; const d = dist(tw.x, tw.y, e.x, e.y); if (d <= tw.range && d < bs) { bs = d; best = e; } }
+      for (const o of b.towers) {
+        if (o === tw || o.dead || !b.H[tw.team][o.team]) continue;
+        const d = dist(tw.x, tw.y, o.x, o.y);
+        if (d > tw.range) continue;
+        const sc = tw.siege ? d - 400 : d + 90;
+        if (sc < bs) { bs = sc; best = o; }
+      }
+      if (!best) continue;
+      tw.cd = tw.rate;
+      const soft = best.tower ? 1.15 : (1 + 0.03 * Math.min(20, best.count)) * FORMATIONS[b.groups[best.g].formation].takeRanged;
+      b.shots.push({ x: tw.x, y: tw.y - 30, t: best, dmg: tw.atk * soft, v: tw.shot === 'arrow' ? 460 : tw.shot === 'bolt' ? 620 : 300, kind: tw.shot, team: tw.team, splash: tw.splash });
     }
     for (const s of b.shots) {
       const d = dist(s.x, s.y, s.t.x, s.t.y), stepLen = s.v * dt;
@@ -243,6 +307,7 @@ const Battles = {
           if (s.splash) {
             if (b.watch) b.fx.push({ kind: b.naval && !s.t.tower ? 'splash' : 'boom', x: s.t.x, y: s.t.y, life: 0.45, max: 0.45 });
             for (const o of all) if (o !== s.t && !o.dead && !o.escaped && o.team === s.t.team && dist(o.x, o.y, s.t.x, s.t.y) < 28) this.hurt(b, o, s.dmg * 0.4 * FORMATIONS[b.groups[o.g].formation].takeRanged);
+            for (const o of b.towers) if (o !== s.t && !o.dead && o.team === s.t.team && dist(o.x, o.y, s.t.x, s.t.y) < 26) this.hurt(b, o, s.dmg * 0.3);
           }
         }
         s.gone = true;
@@ -292,6 +357,13 @@ const Battles = {
 
   resolve(id) { const b = this.get(id); if (!b) return; let n = 0; while (!b.done && n++ < 30000) this.tick(b, BDT); b.linger = 0.5; },
 
+  // Hexes whose building is currently standing in a battle — the map layer leaves those to us.
+  towerHexes() {
+    const out = new Set();
+    for (const b of this.list) for (const tw of b.towers) if (tw.real && tw.hex != null && !tw.dead) out.add(tw.hex);
+    return out;
+  },
+
   frame(dt) {
     for (const b of this.list) {
       if (!b.done && UI.gameSpeed > 0) { const steps = Math.min(15, Math.max(1, Math.round((dt * UI.gameSpeed) / BDT))); for (let i = 0; i < steps && !b.done; i++) this.tick(b, BDT); }
@@ -309,7 +381,7 @@ const Battles = {
       g.translate(hx - (BW / 2) * BSC, hy - (BH / 2) * BSC);
       g.scale(BSC, BSC);
       const grd = g.createRadialGradient(BW / 2, BH / 2, 60, BW / 2, BH / 2, BW * 0.56);
-      grd.addColorStop(0, b.naval ? 'rgba(255,255,255,.08)' : 'rgba(110,86,50,.32)'); grd.addColorStop(1, 'rgba(110,86,50,0)');
+      grd.addColorStop(0, b.naval ? 'rgba(255,255,255,.06)' : 'rgba(110,86,50,.12)'); grd.addColorStop(1, 'rgba(110,86,50,0)');
       g.fillStyle = grd; g.beginPath(); g.ellipse(BW / 2, BH / 2, BW * 0.56, BH * 0.62, 0, 0, 7); g.fill();
       g.strokeStyle = b.done ? 'rgba(255,255,255,.2)' : `rgba(229,83,75,${0.35 + 0.2 * Math.sin(t * 4)})`; g.lineWidth = 3; g.setLineDash([14, 10]);
       g.beginPath(); g.ellipse(BW / 2, BH / 2, BW * 0.55, BH * 0.6, 0, 0, 7); g.stroke(); g.setLineDash([]);
@@ -317,12 +389,12 @@ const Battles = {
       const ents = b.units.filter((u) => !u.dead && !u.escaped).concat(b.towers.filter((x) => !x.dead)).sort((a, c) => a.y - c.y);
       for (const e of ents) {
         const T = b.teams[e.team];
-        if (e.tower) { drawTowerSprite(g, e.x, e.y, e.cannon, e.flash > 0); g.fillStyle = T.color; g.fillRect(e.x - 1, e.y - 62, 2, 12); g.fillRect(e.x + 1, e.y - 62, 8, 5); }
+        if (e.tower) { const ty = towerTop(e); drawBattleTower(g, e, t); g.fillStyle = T.color; g.fillRect(e.x - 1, e.y + ty - 14, 2, 14); g.fillRect(e.x + 1, e.y + ty - 14, 8, 5); }
         else if (e.naval) drawShip(g, e.x, e.y, e.u, T.color, e.face, t + e.walk, e.flash > 0, T.pirate);
         else drawSoldier(g, e.x, e.y, e.u, T.color, e.face, e.walk, e.hit > 0, e.flash > 0);
         if (e.flash > 0) e.flash -= 1 / 60;
         if (e.hp < e.max) {
-          const w = e.tower || e.naval ? 34 : 18, yy = e.y - (e.tower ? 58 : e.naval ? 44 : 26);
+          const w = e.tower || e.naval ? 34 : 18, yy = e.y + (e.tower ? towerTop(e) - 22 : e.naval ? -44 : -26);
           g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(e.x - w / 2, yy, w, 4);
           g.fillStyle = T.player ? '#57c26b' : '#e5534b'; g.fillRect(e.x - w / 2, yy, (w * e.hp) / e.max, 4);
         }
@@ -347,7 +419,8 @@ const Battles = {
         const alive = b.units.filter((q) => q.g === G.gi && !q.dead && !q.escaped);
         if (!alive.length) continue;
         const T = b.teams[G.team];
-        if (T.player) labels.push([`${FORMATIONS[G.formation].icon} ${G.name} · ${STANCES[G.stance].name}`, G.ax, G.ay - 40, '#f2c14e']);
+        if (T.player && !G.ally) labels.push([`${FORMATIONS[G.formation].icon} ${G.name} · ${STANCES[G.stance].name}`, G.ax, G.ay - 40, '#f2c14e']);
+        else if (T.player) labels.push([`🤝 ${G.name}`, G.ax, G.ay - 40, '#9fd6a0']);
       }
       b.teams.forEach((T, ti) => {
         if (T.player) return;
@@ -405,6 +478,17 @@ function drawSoldier(g, x, y, u, color, face, walk, attacking, flash) {
   else { g.moveTo(x + face * 2, y - 6 + bob); g.lineTo(x + face * 16, y - 12 + bob); }
   g.stroke();
   if (u === 'swordsman' || u === 'pikeman') { g.fillStyle = shade(color === '#222' ? '#555555' : color, -0.2); g.fillRect(x - face * 5 - 2, y - 11 + bob, 4, 7); }
+}
+// How far above its centre a tower's art reaches, so flags and health bars sit on top of it.
+const towerTop = (e) => (BUILDINGS[e.type] ? -K_HEX * 1.75 * 0.62 * (ART / BSC) : -48);
+// A tower in a battle is drawn as the building it actually is, at the size it has on the map.
+function drawBattleTower(g, e, t) {
+  if (!BUILDINGS[e.type]) return drawTowerSprite(g, e.x, e.y, e.cannon, e.flash > 0);
+  const sc = ART / BSC, sz = K_HEX * 1.75;
+  g.save(); g.translate(e.x, e.y); g.scale(sc, sc);
+  drawBuilding(g, { id: (e.hex || 1) * 7 + e.level, type: e.type, level: e.level, build: 0 }, -sz / 2, -sz * 0.62, sz, t);
+  if (e.flash > 0) { g.globalAlpha = 0.45; g.fillStyle = '#fff'; g.fillRect(-sz / 2, -sz * 0.62, sz, sz * 0.95); g.globalAlpha = 1; }
+  g.restore();
 }
 function drawTowerSprite(g, x, y, cannon, flash) {
   g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(x, y + 3, 16, 6, 0, 0, 7); g.fill();

@@ -144,6 +144,8 @@ function bonusDrop(tier) {
  * enemy army fights beside its capital's garrison, allies join you, and
  * third parties turn it into a 3-way battle.                              */
 const teamOfKingdom = (k) => (S.allianceId && k.allianceId === S.allianceId ? 'P' : k.allianceId ? 'A:' + k.allianceId : 'K:' + k.id);
+// Forces that share your banner but belong to an allied kingdom — they fight themselves.
+const ALLY_KINDS = ['kgarrison', 'army', 'ktowers', 'aifleet', 'knavy'];
 function teamKingdoms(T) {
   if (T === 'P') return S.kingdoms.filter((k) => S.allianceId && k.allianceId === S.allianceId);
   if (T.startsWith('A:')) return S.kingdoms.filter((k) => k.allianceId === T.slice(2) && teamOfKingdom(k) === T);
@@ -181,7 +183,7 @@ function landForcesNear(hex, r = 2) {
     if (help > 0) out.push({ team: 'P', kind: 'allies', group: plainGroup('allies', 'Allied reinforcements', armyFromPower(help, 2, 'balanced'), null) });
   }
   const tw = playerTowers(hex);
-  if (tw.n) out.push({ team: 'P', kind: 'towers', towers: tw.n, towerHall: tw.hall, towerHp: tw.hpMult });
+  if (tw.length) out.push({ team: 'P', kind: 'towers', towers: tw });
   for (const a of S.aiArmies) {
     if (a.status === 'fighting' || WG.dist(a.at, hex) > r || !armyHousing(a.units)) continue;
     const k = S.kingdoms[a.kid];
@@ -190,7 +192,8 @@ function landForcesNear(hex, r = 2) {
   for (const k of S.kingdoms) {
     if (WG.dist(k.capital, hex) > r + 2 || k.garrisonBusy) continue;
     out.push({ team: teamOfKingdom(k), kind: 'kgarrison', k, group: { key: 'kg' + k.id, name: `${k.name} garrison`, units: armyFromPower(k.power, k.hall, k.personality), stats: (u) => enemyUnitStats(u, k.hall) } });
-    if (WG.dist(hex, k.capital) <= 2) out.push({ team: teamOfKingdom(k), kind: 'ktowers', k, towers: clamp(Math.round(k.defense / 70), 1, 8), towerHall: k.hall });
+    const kt = aiCity(k).buildings.filter((b) => DEF_TYPES.includes(b.type) && WG.dist(b.hex, hex) <= 3).map((b) => ({ type: b.type, level: b.level, hex: b.hex }));
+    if (kt.length) out.push({ team: teamOfKingdom(k), kind: 'ktowers', k, towers: kt });
   }
   return out;
 }
@@ -221,13 +224,16 @@ function gatherBattle(hex, core, opts) {
   }
   const forces = pool.filter((f) => inTeams.has(f.team));
   const teams = [...inTeams].map((T) => {
-    const mine = forces.filter((f) => f.team === T), tw = mine.find((f) => f.towers);
-    return { id: T, ...teamInfo(T), groups: mine.filter((f) => f.group).map((f) => f.group), towers: tw ? tw.towers : 0, towerHall: tw ? tw.towerHall : 1, towerHp: tw ? tw.towerHp : 1 };
+    const mine = forces.filter((f) => f.team === T);
+    // Allied kingdoms fight on your side but run themselves — you never get handed their armies.
+    const groups = mine.filter((f) => f.group).map((f) => (ALLY_KINDS.includes(f.kind) ? { ...f.group, ally: true } : f.group));
+    return { id: T, ...teamInfo(T), groups, towers: mine.flatMap((f) => f.towers || []) };
   });
-  const hasFighters = (T) => { const t = teams.find((x) => x.id === T); return t && (t.groups.some((g) => Object.values(g.units).some((v) => v > 0)) || t.towers); };
+  const hasFighters = (T) => { const t = teams.find((x) => x.id === T); return t && (t.groups.some((g) => Object.values(g.units).some((v) => v > 0)) || t.towers.length); };
   if (!core.every(hasFighters)) return null;
   forces.forEach((f) => { if (f.k && f.kind === 'kgarrison') f.k.garrisonBusy = true; });
-  const playerIn = teams.some((t) => t.player);
+  // You only take the field when forces of your own are in it — not when allies squabble on the far side of the world.
+  const playerIn = forces.some((f) => f.team === 'P' && !ALLY_KINDS.includes(f.kind));
   const cfg = { kind: opts.kind, hex, title: opts.title, holder: opts.holder, teams, hostile: (a, b) => teamsHostile(a, b, core),
     onEnd: (r) => {
       consumeBoosts();
@@ -242,7 +248,7 @@ function gatherBattle(hex, core, opts) {
           f.ref.path = findPath(WG, f.ref.at, k.capital, aiLandCost, 25000) || []; f.ref.status = f.ref.path.length ? 'moving' : 'idle';
         }
       }
-      if (r.teams.P) {   // every battle you take part in counts, however it started
+      if (r.teams.P && playerIn) {   // every battle your own forces take part in counts, however it started
         const key = opts.kind === 'naval' ? 'naval' : 'battles';
         S.stats[key + (r.win ? 'Won' : 'Lost')]++;
       }
@@ -278,7 +284,8 @@ function settleForces(forces, r) {
   return lostAll;
 }
 function bandits(hex, power, tier, towers) {
-  return { team: 'B', kind: 'bandits', group: { key: 'bandits', name: 'Bandits', units: armyFromPower(power, tier, 'balanced'), stats: (u) => enemyUnitStats(u, tier) }, towers: towers || 0, towerHall: tier };
+  const walls = Array.from({ length: towers || 0 }, (_, i) => ({ type: i % 2 && tier >= 3 ? 'cannon' : 'tower', level: tier, hex: WG.neighbors(hex)[i * 2 % 6] ?? hex }));
+  return { team: 'B', kind: 'bandits', group: { key: 'bandits', name: 'Bandits', units: armyFromPower(power, tier, 'balanced'), stats: (u) => enemyUnitStats(u, tier) }, towers: walls };
 }
 
 /* ---------- player order arrivals ---------- */
@@ -289,7 +296,7 @@ function arrive(ent) {
   const f = S.world.feat[o.hex], owner = S.world.owner[o.hex];
   if (isFleet(ent)) return arriveFleet(ent, o, f);
   const d = ent;
-  if (o.type === 'claim') claimTile(o.hex);
+  if (o.type === 'claim') { if (claimTile(o.hex, 2)) reveal(d.at, 3); }
   else if (o.type === 'explore' && f && f.type === 'ruins' && !f.looted) {
     gatherBattle(o.hex, ['P', 'B'], { kind: 'land', title: `🏛️ ${d.name} explores the ruins`, extra: [bandits(o.hex, f.guard, f.tier)],
       onEnd: (r, lost) => {
@@ -382,7 +389,8 @@ function arriveFleet(fl, o, f) {
     const loot = lootTier(f.tier, 0.8); gain(loot, true);
     report(`⚓ ${fl.name} salvaged the wreck: ${costText(loot)}. ${bonusDrop(f.tier)}`, 'good');
   } else if (o.type === 'cove' && f && f.type === 'cove' && !f.destroyed) {
-    const cove = { team: 'X', kind: 'cove', group: { key: 'cove', name: 'Pirate cove', units: fleetFromPower(f.power, 3), stats: (t) => enemyShipStats(t, 3) }, towers: 2, towerHall: 3 };
+    const coveGuns = [{ type: 'cannon', level: 3, hex: fl.at }, { type: 'tower', level: 3, hex: WG.neighbors(fl.at)[0] ?? fl.at }];
+    const cove = { team: 'X', kind: 'cove', group: { key: 'cove', name: 'Pirate cove', units: fleetFromPower(f.power, 3), stats: (t) => enemyShipStats(t, 3) }, towers: coveGuns };
     gatherBattle(fl.at, ['P', 'X'], { kind: 'naval', title: `🏴‍☠️ ${fl.name} attacks the pirate cove`, extra: [cove], holder: 'X',
       onEnd: (r, lost) => {
         if (r.win) { f.destroyed = true; const loot = lootTier(3, 1.6); gain(loot, true); report(`🏴‍☠️ The pirate cove burns! Treasure: ${costText(loot)}. ${bonusDrop(3)}`, 'good', lost); }
@@ -391,7 +399,7 @@ function arriveFleet(fl, o, f) {
   } else if (o.type === 'blockade') {
     const k = S.kingdoms[o.kid], T = teamOfKingdom(k);
     provoke(k);
-    const navy = { team: T, kind: 'knavy', k, group: { key: 'knavy', name: `${k.name} home fleet`, units: fleetFromPower(Math.max(40, k.navy), k.hall), stats: (t) => enemyShipStats(t, k.hall) }, towers: clamp(Math.round(k.defense / 150), 1, 4), towerHall: k.hall };
+    const navy = { team: T, kind: 'knavy', k, group: { key: 'knavy', name: `${k.name} home fleet`, units: fleetFromPower(Math.max(40, k.navy), k.hall), stats: (t) => enemyShipStats(t, k.hall) }, towers: aiCity(k).buildings.filter((b) => DEF_TYPES.includes(b.type) && WG.dist(b.hex, fl.at) <= 3).map((b) => ({ type: b.type, level: b.level, hex: b.hex })) };
     gatherBattle(fl.at, ['P', T], { kind: 'naval', title: `⚓ ${fl.name} blockades ${k.name}`, extra: [navy], holder: T,
       onEnd: (r, lost) => {
         const left = (r.teams[T] || { groups: [] }).groups.find((g) => g.key === 'knavy');
@@ -637,13 +645,12 @@ function etaAi(a) {
   const sp = Math.min(...COMBAT_UNITS.filter((u) => a.units[u] > 0).map((u) => UNITS[u].speed), 1.2);
   return a.path.reduce((s, i) => s + HEX_TIME_LAND * aiLandCost(i), 0) / sp;
 }
-// Your towers, cannons, spires and fortresses within 3 hexes fight in any battle there.
+/* Your towers, cannons, spires and fortresses within 3 hexes fight in any battle there —
+   every one of them, as itself, standing on its own hex. Walls nearby stiffen them. */
 function playerTowers(hex = S.world.capital) {
-  const defs = defensesNear(hex, 3);
-  const n = defs.reduce((s2, b) => s2 + (b.type === 'fortress' ? 2 : 1), 0);
-  const lvl = defs.length ? defs.reduce((s2, b) => s2 + b.level, 0) / defs.length : 1;
   const walls = S.buildings.filter((b) => b.type === 'wall' && WG.dist(b.hex, hex) <= 4).length;
-  return { n: Math.min(10, n), hall: lvl + 0.5 * defs.filter((b) => b.type !== 'tower').length, hpMult: 1 + Math.min(0.5, walls * 0.02) };
+  const hpMult = 1 + Math.min(0.5, walls * 0.02);
+  return defensesNear(hex, 3).map((b) => ({ type: b.type, level: b.level, hex: b.hex, hpMult }));
 }
 function raidersHome(a, k, units) {
   if (armyHousing(units) <= 0) return;
@@ -721,7 +728,12 @@ const DIPLO = {
   },
 };
 
-/* ---------- encounters: hostile forces within one hex fight ---------- */
+/* ---------- encounters: armies scout around themselves and engage what they find ----------
+   Every army — yours and theirs — watches a ring of hexes around it. March a hostile
+   force into that ring and the two sides go at each other without being told to.
+   Standing still lets scouts range one hex further. */
+const DETECT_R = 2, DETECT_R_IDLE = 3;
+const detectRange = (e, idle) => (idle ? DETECT_R_IDLE : DETECT_R) + (e && e.units && e.units.scout > 0 ? 1 : 0);
 const crossing = (a, b) => a.path.length && b.path.length && a.path[0] === b.at && b.path[0] === a.at;
 function checkEncounters(offline) {
   const land = S.divisions.filter((d) => d.status !== 'fighting' && armyHousing(d.units) > 0 && !onCooldown(d)).map((d) => ({ team: 'P', e: d, zone: !d.path.length }))
@@ -729,13 +741,14 @@ function checkEncounters(offline) {
   // your towers, cannons, spires and fortresses open fire on hostile armies passing within range
   for (const L of land) {
     if (L.team === 'P' || L.e.status === 'fighting' || !(L.raid || teamsHostile(L.team, 'P')) || !(L.e.path.length || L.raid)) continue;
-    if (playerTowers(L.e.at).n > 0) fieldBattle(L.e.at, 'P', L.team, `🗼 Your defenses open fire on the ${teamInfo(L.team).name} army`, offline);
+    if (playerTowers(L.e.at).length) fieldBattle(L.e.at, 'P', L.team, `🗼 Your defenses open fire on the ${teamInfo(L.team).name} army`, offline);
   }
   for (let i = 0; i < land.length; i++) for (let j = i + 1; j < land.length; j++) {
     const A = land[i], B = land[j];
     if (A.team === B.team || A.e.status === 'fighting' || B.e.status === 'fighting') continue;
     const d = WG.dist(A.e.at, B.e.at);
-    const close = d <= 1 || crossing(A.e, B.e) || (d <= 3 && (A.zone || B.zone));
+    const reach = Math.max(detectRange(A.e, A.zone), detectRange(B.e, B.zone));
+    const close = d <= reach || crossing(A.e, B.e);
     if (!close) continue;
     const hostile = teamsHostile(A.team, B.team) || ((A.raid || B.raid) && (A.team === 'P' || B.team === 'P'));
     if (!hostile) continue;

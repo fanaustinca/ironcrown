@@ -107,7 +107,7 @@ function renderBattleHud() {
     <span class="bh-count">${b.teams.map((T, ti) => `<span style="color:${T.color === '#222' ? '#ccc' : T.color}" title="${esc(T.name)}">${cnt(ti)}${b.towers.some((x) => x.team === ti && !x.dead) ? ' 🗼' + b.towers.filter((x) => x.team === ti && !x.dead).length : ''}</span>`).join(' vs ')}</span>
     <span class="spacer"></span>${btn('🎯', 'b-focus', b.id, { cls: 'sm ghost', title: 'Center camera' })}${b.done ? '' : btn('⏭ Auto-resolve', 'b-resolve', b.id, { cls: 'sm ghost' })}</div>`;
   if (!b.done) {
-    const mine = b.groups.filter((G) => G.team === pti && b.teams[pti] && b.teams[pti].player && Battles.active(b, pti).some((q) => q.g === G.gi));
+    const mine = b.groups.filter((G) => G.team === pti && !G.ally && b.teams[pti] && b.teams[pti].player && Battles.active(b, pti).some((q) => q.g === G.gi));
     const segF = (arg, cur) => `<div class="seg">${Object.entries(FORMATIONS).map(([k, f]) => `<button class="${cur === k ? 'on' : ''}" data-action="b-form" data-arg="${arg}:${k}" title="${esc(f.name + ': ' + f.desc)}">${f.icon} ${f.name}</button>`).join('')}</div>`;
     const segS = (arg, cur) => `<div class="seg">${Object.entries(STANCES).map(([k, st]) => `<button class="${cur === k ? 'on' : ''} ${k === 'retreat' ? 'warn' : ''}" data-action="b-stance" data-arg="${arg}:${k}" title="${esc(st.desc)}">${st.icon} ${st.name}</button>`).join('')}</div>`;
     const sel = (attr, arg, obj, cur) => `<select ${attr}="${arg}">${Object.entries(obj).map(([k, v]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${v.icon ? v.icon + ' ' + v.name : '🎯 ' + v}</option>`).join('')}</select>`;
@@ -119,6 +119,8 @@ function renderBattleHud() {
         ? `<div class="bh-row compact"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>${sel('data-bform', `${b.id}:${G.gi}`, FORMATIONS, G.formation)}${sel('data-bstance', `${b.id}:${G.gi}`, STANCES, G.stance)}${sel('data-btarget', `${b.id}:${G.gi}`, TARGETS, G.target)}</div>`
         : `<div class="bh-row"><b class="bh-name">${esc(G.name)} <span class="muted">(${n})</span></b>${segF(`${b.id}:${G.gi}`, G.formation)}${segS(`${b.id}:${G.gi}`, G.stance)}${sel('data-btarget', `${b.id}:${G.gi}`, TARGETS, G.target)}</div>`;
     }
+    const allies = b.groups.filter((G) => G.team === pti && G.ally && Battles.active(b, pti).some((q) => q.g === G.gi));
+    if (allies.length) h += `<div class="bh-row small muted">🤝 Fighting alongside you (they command themselves): ${allies.map((G) => esc(G.name)).join(', ')}</div>`;
     const others = b.teams.filter((T) => !T.player);
     h += `<div class="bh-row small muted">${b.teams.length > 2 ? `⚔️ ${b.teams.length}-way battle · ` : ''}${others.map((T) => { const gs = b.groups.filter((G) => b.teams[G.team] === T); return `<span style="color:${T.color === '#222' ? '#ccc' : T.color}">${esc(T.name)}</span> ${gs.length > 1 ? `(${gs.length} armies)` : ''}: ${gs[0] ? FORMATIONS[gs[0].formation].icon + ' ' + FORMATIONS[gs[0].formation].name : 'towers'}`; }).join(' &nbsp;|&nbsp; ')}</div>`;
   }
@@ -271,6 +273,7 @@ function divisionCard(d) {
   return `<div class="card ${UI.selEntity && UI.selEntity.id === d.id ? 'hl' : ''}"><div class="row"><span class="swatch" style="background:${d.color}"></span><b>${esc(d.name)}</b><span class="spacer"></span><span class="small muted">⚡${fmt(armyPower(d.units, d.general))}</span></div>
     <div class="pills">${unitList(d.units, UNITS)}</div>
     <div class="small">${where}${d.path.length ? ` · ${d.order ? d.order.type : 'move'} · ETA ${fmtTime(eta)}` : d.at !== S.world.capital ? ' · 🛡️ guarding' : ''}${d.status === 'fighting' ? ' · ⚔ fighting' : ''}</div>
+    <div class="small muted">👁️ Attacks any enemy within ${detectRange(d, !d.path.length)} hexes${d.units.scout > 0 ? ' (scouts extend the watch)' : ''}</div>
     <div class="row small" style="margin-top:4px"><span class="muted">General</span><select data-divgen="${d.id}">${[d.general].concat(idleGenerals().map((g) => g.uid)).concat(S.divisions.filter((x) => x !== d && x.general).map((x) => x.general)).filter((v, k, arr) => v && arr.indexOf(v) === k).map((u) => { const gd = generalData(u), post = generalPost(u); return `<option value="${u}" ${u === d.general ? 'selected' : ''}>${gd.icon} ${esc(gd.name)} ${'★'.repeat(genInst(u).stars)}${u === d.general ? '' : post.kind === 'division' ? ' (swap)' : ''}</option>`; }).join('')}</select></div>
     ${battleDefaults(d, 'division')}
     <div class="row wrap" style="margin-top:6px">${btn('🗺️ Select', 'select-entity', 'division:' + d.id, { cls: 'sm' })}
@@ -384,6 +387,7 @@ function ordersFor(e, i) {
     if (ef) o.push(['hunt', ef.owner === 'pirate' ? '🎯 Attack the pirates' : `⚔️ Attack the ${S.kingdoms[ef.owner].name} navy${aiFleetHostile(ef) ? '' : ' (angers them)'}`]);
   } else {
     if (isPassable(i) || (isWater(i) && canEmbark(e))) o.push(['move', S.world.owner[i] === -2 ? '🛡️ Station & guard here' : '🚶 March here']);
+    if (owner === -1 && isPassable(i)) o.push(['claim', '🏳️ Annex this land']);
     if (owner >= 0 && seen && !(S.allianceId && S.kingdoms[owner].allianceId === S.allianceId)) o.push(['attack', i === S.kingdoms[owner].capital ? `⚔️ Assault ${S.kingdoms[owner].name}` : '🏳️ Invade this hex']);
     if (f && seen && ((f.type === 'ruins' && !f.looted) || (f.type === 'cave' && !f.explored))) o.push(['explore', f.type === 'ruins' ? '🏛️ Explore ruins' : '🕳️ Explore cave']);
     if (f && f.type === 'fort' && !f.captured && seen) o.push(['capture', '🏯 Capture fort']);
@@ -430,6 +434,16 @@ function renderWorldInfo() {
   h += known.map((k) => { const a = allianceOf(k.allianceId); return `<div class="member clickable" data-action="focus-kingdom" data-arg="${k.id}"><span class="dot" style="background:${k.color}"></span><div><b>${k.name}</b><div class="small muted">Keep ${k.hall} · ${kingdomTiles(k.id)} hexes${a ? ' · ' + a.emblem + ' ' + esc(a.name) : ''}</div></div><span class="spacer"></span><span class="small">${relationBar(k)}</span></div>`; }).join('') || '<p class="small muted">None yet — scout into the fog.</p>';
   return h;
 }
+// Settling neutral land: pick how big a region the settlers take.
+function claimCard(i) {
+  const maxR = settleRadius(), r = clamp(UI.claimRadius || 1, 1, maxR);
+  const cl = claimCluster(i, r), err = claimError(i, r), far = distToTerritory(i);
+  const opts = Array.from({ length: maxR }, (_, k) => `<option value="${k + 1}" ${k + 1 === r ? 'selected' : ''}>${k + 1} (${claimCluster(i, k + 1).length} hexes)</option>`).join('');
+  return `<div class="card"><b>🏳️ Unclaimed land</b> <span class="small muted">${far > 1 ? `· ${far} hexes beyond your border` : '· borders your land'}${isSeen(i) ? '' : ' · unexplored'}</span>
+    <div class="row" style="margin-top:6px"><span class="small">Settle a region of radius</span><select data-claimradius="1" style="width:130px">${opts}</select></div>
+    <div class="row" style="margin-top:6px">${costHtml(claimCost(i, r), S.res)}<span class="spacer"></span>${btn(`🏳️ Claim ${cl.length} hexes`, 'claim', `${i}:${r}`, { disabled: !!err, title: err || '' })}</div>
+    ${err ? `<div class="small muted">${esc(err)}</div>` : `<div class="small muted">Settlers reach ${settleReach()} hexes past your border, so your empire can keep spreading. A division standing on neutral land can annex it outright.</div>`}</div>`;
+}
 function hexCard(i) {
   const { terrain, owner, feat } = S.world, seen = isSeen(i), ter = TERRAIN[terrain[i]], o = owner[i], f = feat[i];
   let h = `<div class="row"><h2>${seen ? ter.name : 'Unexplored'}</h2><span class="muted small">${hexName(i)}</span><span class="spacer"></span><button class="icon-btn" data-action="world-deselect">✕</button></div>`;
@@ -447,14 +461,14 @@ function hexCard(i) {
     }
     if (o === -2) h += territoryCard(i);
     if (o === -1 && terrain[i] !== T.WATER && terrain[i] !== T.MOUNTAIN) {
-      const err = claimError(i), far = distToTerritory(i);
+      h += claimCard(i);
       h += buildHereCard(i, true);
-      h += `<div class="card"><b>Neutral land</b> <span class="small muted">${far > 1 ? `· ${far} hexes from your borders (+${Math.round(20 * (far - 1))}% cost)` : '· borders your land'}</span><div class="row" style="margin-top:6px">${costHtml(claimCost(i), S.res)}<span class="spacer"></span>${btn('🏳️ Claim', 'claim', i, { disabled: !!err, title: err || '' })}</div>${err ? `<div class="small muted">${esc(err)}</div>` : '<div class="small muted">Outlying land is a raid target unless you station a division or build a watchtower/fortress.</div>'}</div>`;
     }
     if (o >= 0) h += kingdomCard(S.kingdoms[o]);
     const here = S.aiArmies.filter((a) => a.at === i).concat(S.aiFleets.filter((f2) => f2.at === i));
     for (const x of here) h += `<div class="card small">${x.ships ? `⛵ ${x.owner === 'pirate' ? 'Pirate fleet' : S.kingdoms[x.owner].name + (x.patrol ? ' navy patrol' : ' fleet')} — ${shipCount(x.ships)} ships ${unitList(x.ships, SHIPS)}` : `⚔️ ${S.kingdoms[x.kid].name} ${({ raid: 'raiders — coming for you!', war: 'war army', guard: 'guard army', home: 'army returning home' })[x.kind] || 'army'} — ${armyHousing(x.units)} troops ${unitList(x.units, UNITS)}`}</div>`;
   }
+  if (!seen && S.world.owner[i] === -1 && terrain[i] !== T.WATER && terrain[i] !== T.MOUNTAIN && canSettle(i)) h += claimCard(i);
   const n = S.army.scout;
   h += `<h3>Scouting</h3><div class="card"><div class="row"><span>Send</span><select id="scout-count" style="width:70px">${Array.from({ length: Math.max(1, n) }, (_, k) => `<option>${k + 1}</option>`).join('')}</select><span class="small">of ${n} scouts</span><span class="spacer"></span>
     ${btn('🔭 Scout here', 'scout-here', i, { disabled: n < 1, title: n ? '' : 'Train scouts at the Scout Lodge' })}</div><div class="small muted" style="margin-top:4px">A scout party walks here from your capital, revealing every hex on the way.</div></div>`;

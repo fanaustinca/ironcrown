@@ -495,10 +495,134 @@ await test('towers open fire on passing enemies; battles do not chain', async ()
     for (let t = 0; t < 10; t++) step(1, true);
     const after10 = n;
     Battles.create = orig;
-    return { fought: after10 >= 1, chained: after10 > 3, towers: playerTowers(passBy).n };
+    return { fought: after10 >= 1, chained: after10 > 3, towers: playerTowers(passBy).length, kinds: playerTowers(passBy).map((x) => x.type) };
   });
   assert(r.towers > 0 && r.fought, `defenses engaged the passing army (towers ${r.towers})`);
+  assert(r.kinds.every((k) => k === 'tower'), `the real building fights as itself, got ${r.kinds.join()}`);
   assert(!r.chained, 'no endless chain of battles');
+});
+
+await test('empire expands into unexplored land: settle a whole region at once', async () => {
+  await G(() => window.ironcrown.debug.give({ gold: 600000, food: 600000 }));
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    const hall = s.buildings.find((b) => b.type === 'hall');
+    hall.level = Math.max(hall.level, 8);                     // a big hall settles a radius-5 region
+    const land = (i) => s.world.owner[i] === -1 && isPassable(i) && !s.world.feat[i];
+    const before = playerTiles();
+    // 1. push the border outwards with one big claim on the edge of what you have seen
+    const edge = W.within(s.world.capital, 30).filter((i) => land(i) && isSeen(i)).sort((a, b) => distToTerritory(b) - distToTerritory(a))[0];
+    const big = Math.min(4, settleRadius()), planned = claimCluster(edge, big).length;
+    const firstOk = claimTile(edge, big);
+    const gained = playerTiles() - before;
+    // 2. from that new border, settle land nobody has ever walked
+    //    (an earlier test lifted the fog, so put it back around the new frontier)
+    for (const i of W.within(edge, 10)) if (s.world.owner[i] === -1) s.world.seen[i] = 0;
+    const dark = W.within(edge, 10).filter((i) => land(i) && !isSeen(i) && distToTerritory(i) >= 1 && distToTerritory(i) <= settleReach())[0];
+    if (dark == null) return { firstOk, planned, gained, dark: null };
+    const darkOk = claimTile(dark, 2);
+    return { firstOk, planned, gained, dark: true, darkOk, owned: s.world.owner[dark] === -2, nowSeen: isSeen(dark), reach: settleReach(), radius: settleRadius() };
+  });
+  assert(r.firstOk && r.planned > 7 && r.gained >= r.planned - 1, `one claim settles a whole region (${r.gained} hexes, planned ${r.planned})`);
+  assert(r.dark, 'unexplored land sits just past the new border');
+  assert(r.darkOk && r.owned, 'settlers pushed into land that was never scouted');
+  assert(r.nowSeen, 'settlers reveal what they settle');
+  await shot('07d-expansion');
+});
+
+await test('armies auto-engage any enemy inside their detection radius', async () => {
+  await G(() => { window.ironcrown.SETTINGS.battleMode = 'auto'; cheats.army(80); });
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    s.divisions.forEach((d) => { d.at = s.world.capital; d.path = []; d.cooldown = 0; });
+    const k = s.kingdoms.find((x) => canReachCapital(x));
+    k.atWar = true; k.relation = -90;
+    const d = s.divisions[0];
+    const spot = W.within(s.world.capital, 9).find((i) => isPassable(i) && W.dist(i, s.world.capital) === 8);
+    d.at = spot; d.path = []; d.status = 'idle'; d.cooldown = 0;
+    // park a hostile army exactly DETECT_R hexes away, standing still, with nothing else nearby
+    const away = W.within(spot, DETECT_R).find((i) => isPassable(i) && W.dist(i, spot) === DETECT_R);
+    if (away == null) return { skip: true };
+    s.aiArmies = [{ id: 'sniffer', kid: k.id, kind: 'war', units: { swordsman: 12, archer: 4, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 }, hall: 1, at: away, path: [], prog: 0, target: away, status: 'idle', cooldown: 0 }];
+    let fought = false;
+    const orig = Battles.create.bind(Battles);
+    Battles.create = (c) => { fought = true; return orig(c); };
+    checkEncounters(true);
+    Battles.create = orig;
+    return { skip: false, fought, gap: W.dist(spot, away), radius: DETECT_R };
+  });
+  if (r.skip) return;
+  assert(r.gap === r.radius, 'the enemy stood at the edge of the ring');
+  assert(r.fought, `the division attacked an enemy ${r.gap} hexes away on its own`);
+  await G(() => { const s = window.ironcrown.state; s.aiArmies = []; s.kingdoms.forEach((k) => { k.atWar = false; k.relation = Math.max(k.relation, 0); }); });
+});
+
+await test('you never have to command an allied kingdom\'s battle', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    s.divisions.forEach((d) => { d.at = s.world.capital; d.path = []; d.status = 'idle'; d.cooldown = 0; });
+    const friend = s.kingdoms[0], foe = s.kingdoms.find((k) => k !== friend);
+    window.__restore = { id: friend.id, allianceId: friend.allianceId, relation: foe.relation };
+    // join a fresh alliance with `friend`, then stage a fight far from anything of yours
+    s.allianceId = null;
+    createAlliance('Test Concord', '#57c26b', '🤝');
+    const a = S.alliances.find((x) => x.id === s.allianceId);
+    a.leader = 'P'; a.members.push(friend.id); friend.allianceId = a.id;
+    foe.atWar = false; foe.relation = -90;
+    friend.wars = { [foe.id]: s.time + 999 }; foe.wars = { [friend.id]: s.time + 999 };
+    const hex = W.within(friend.capital, 2).find((i) => isPassable(i) && W.dist(i, s.world.capital) > 8) ?? friend.capital;
+    const army = { id: 'ally-war', kid: foe.id, kind: 'war', units: { swordsman: 20, archer: 10, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 }, hall: 2, at: hex, path: [], prog: 0, target: hex, status: 'idle', cooldown: 0 };
+    s.aiArmies = [army];
+    const live = Battles.list.length;
+    const bt = gatherBattle(hex, ['P', teamOfKingdom(foe)], { kind: 'land', title: 'allied war' });
+    const P = bt && bt.teams.find((t) => t.player);
+    return { made: !!bt, watched: Battles.list.length > live, ally: P ? P.groups.every((g) => g.ally) : null, mineToCommand: P ? P.groups.filter((g) => !g.ally).length : -1 };
+  });
+  assert(r.made, 'the allied kingdom still fought its war');
+  assert(r.ally === true, 'every friendly group there belonged to the ally');
+  assert(!r.watched, 'no battle was handed to you to command');
+  assert(r.mineToCommand === 0, 'you had nothing of your own on that field');
+  await G(() => {   // put the world back the way the later tests expect to find it
+    const s = window.ironcrown.state, was = window.__restore;
+    leaveAlliance();
+    s.alliances = s.alliances.filter((a) => a.name !== 'Test Concord');
+    s.kingdoms.forEach((k) => { k.wars = {}; k.atWar = false; });
+    const friend = s.kingdoms[was.id], home = s.alliances.find((a) => a.id === was.allianceId);
+    friend.allianceId = was.allianceId;
+    if (home && !home.members.includes(friend.id)) home.members.push(friend.id);
+    s.kingdoms.forEach((k) => { if (k.allianceId && !s.alliances.some((a) => a.id === k.allianceId)) k.allianceId = null; });
+    s.aiArmies = [];
+  });
+});
+
+await test('battles use the real towers standing on the map, and towers duel towers', async () => {
+  await G(() => { cheats.res(400000); cheats.build(); });
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    const hall = s.buildings.find((b) => b.type === 'hall'); hall.level = Math.max(hall.level, 5);
+    const spot = window.ironcrown.debug.freeHex('cannon');
+    placeBuilding('cannon', spot); cheats.build();
+    const t2 = window.ironcrown.debug.freeHex('tower');
+    placeBuilding('tower', t2); cheats.build();
+    const defs = playerTowers(spot);
+    // an enemy with towers of its own, so the two sets of stonework can shoot at each other
+    const foe = { id: 'K:99', name: 'Testers', color: '#e5534b', groups: [], towers: [{ type: 'tower', level: 3, hex: W.neighbors(spot)[0] }] };
+    const bt = Battles.create({ kind: 'land', hex: spot, title: 'tower duel',
+      teams: [{ id: 'P', name: 'You', color: '#f2c14e', player: true, groups: [], towers: defs }, foe],
+      hostile: (a, b) => a !== b });
+    const mine = bt.towers.filter((x) => x.team === 0);
+    const before = bt.towers.filter((x) => x.team === 1).reduce((a, x) => a + x.hp, 0);
+    for (let i = 0; i < 400; i++) Battles.tick(bt, 1 / 30);
+    const after = bt.towers.filter((x) => x.team === 1).reduce((a, x) => a + x.hp, 0);
+    return { types: defs.map((d) => d.type).sort(), onRealHexes: mine.every((x) => x.real && x.hex != null),
+      placed: mine.map((x) => x.hex).sort().join() === defs.map((d) => d.hex).sort().join(),
+      hasCannon: mine.some((x) => x.type === 'cannon'), hasArcher: mine.some((x) => x.type === 'tower'),
+      damagedEnemyTowers: after < before };
+  });
+  assert(r.types.includes('cannon') && r.types.includes('tower'), `both buildings joined as themselves (${r.types.join()})`);
+  assert(r.hasCannon && r.hasArcher, 'a cannon fights as a cannon and an archer tower as an archer tower');
+  assert(r.onRealHexes && r.placed, 'towers stand on their own hexes, not on a made-up back line');
+  assert(r.damagedEnemyTowers, 'towers opened fire on the enemy towers');
 });
 
 await test('assets are version-stamped so updates never mix old and new files', async () => {

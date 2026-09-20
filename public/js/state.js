@@ -16,7 +16,7 @@ let S = null;
 const UI = {
   view: 'kingdom', tab: 'info', selected: null, placing: null, worldSel: -1, selEntity: null,
   hover: -1, fx: [], panelDirty: true, lastPanelHtml: '', pointerDown: false, logUnread: false,
-  attackDraft: null, allianceDraft: null, divisionDraft: null, boxToken: 0, alerts: [],
+  attackDraft: null, allianceDraft: null, divisionDraft: null, boxToken: 0, alerts: [], claimRadius: 1,
 };
 
 const storage = {
