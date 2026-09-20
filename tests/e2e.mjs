@@ -48,6 +48,7 @@ async function test(name, fn) {
   }
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
+const s0Divisions = 12;   // slack for the player's own forces in view
 const G = (fn, arg) => page.evaluate(fn, arg);
 const state = () => G(() => window.ironcrown.state);
 const ff = (s) => G((s) => window.ironcrown.debug.fastForward(s), s);
@@ -431,8 +432,9 @@ await test('battle is fought on the map with formations and stances', async () =
   assert(await page.isHidden('#modal'), 'no separate battle screen');
   await page.waitForSelector('#battle-hud:not([hidden])');
   assert(await page.isVisible('#battle-hud'), 'command bar visible');
-  await page.click('[data-action="b-form"][data-arg$=":wedge"]', { force: true });
-  await page.click('[data-action="b-stance"][data-arg$=":charge"]', { force: true });
+  // the HUD ticks every second, so drive the controls through the DOM handler
+  await page.$eval('[data-action="b-form"][data-arg$=":wedge"]', (b) => b.click());
+  await page.$eval('[data-action="b-stance"][data-arg$=":charge"]', (b) => b.click());
   const g = await G(() => { const b = window.ironcrown.Battles.list[0]; return { f: b.groups[0].formation, s: b.groups[0].stance }; });
   assert(g.f === 'wedge' && g.s === 'charge', 'formation & stance changed mid-battle');
   await page.waitForTimeout(1500);
@@ -740,6 +742,10 @@ await test('zoomed in on High graphics an army is drawn soldier by soldier', asy
     const d = s.divisions[0];
     d.at = s.world.capital; d.path = []; d.status = 'idle';
     const troops = armyHousing(d.units);
+    // pause first: a battle starting mid-measurement draws soldiers at any zoom
+    const speed = UI.gameSpeed;
+    setSpeed(0);
+    Battles.list.length = 0;
     const real = window.drawSoldier;
     let n = 0;
     window.drawSoldier = (...a) => { n++; return real(...a); };
@@ -756,6 +762,7 @@ await test('zoomed in on High graphics an army is drawn soldier by soldier', asy
     const lowPoly = await count('low', 5);
     window.drawSoldier = real;
     window.ironcrown.SETTINGS.graphics = 'high';
+    setSpeed(speed || 1);
     return { troops, zoomedIn, zoomedOut, lowPoly, armyZ: ARMY_Z };
   });
   assert(r.troops > 10, `the division has troops to draw (${r.troops})`);
@@ -874,6 +881,94 @@ await test('soldiers are drawn much smaller than they were', async () => {
   });
   assert(r.scale <= 0.6, `figures are drawn at ${r.scale} of their old size`);
   assert(r.drawn < r.ifFullSize * 0.45, `which is far less ink on the map (${r.drawn} vs ${r.ifFullSize} pixels)`);
+});
+
+await test('a big kingdom is cheap to draw: glyphs far out, cached art close in', async () => {
+  const r = await G(async () => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    window.ironcrown.debug.give({ gold: 9e7, lumber: 9e7, iron: 9e7, food: 9e7 });
+    cheats.build();
+    let n = 0;
+    for (let k = 0; k < 90; k++) { const i = window.ironcrown.debug.freeHex('farm'); if (i >= 0 && placeBuilding(pick(['farm', 'village', 'lumbermill', 'tower']), i)) { n++; cheats.build(); } }
+    SETTINGS.graphics = 'high'; SETTINGS.autoQuality = false; GOV.level = 0; resize();
+    const real = window.drawBuilding;
+    let calls = 0;
+    window.drawBuilding = (...a) => { calls++; return real(...a); };
+    const at = (z) => {
+      CAM.z = z; CAM.centerOn(s.world.capital); CAM.clamp();
+      spriteCache.clear();
+      drawWorld(ctx, 1, 1 / 60);            // first pass fills the sprite cache
+      calls = 0;
+      drawWorld(ctx, 1, 1 / 60);
+      const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+      const inv = (i) => WG.cx[i] >= x0 && WG.cx[i] <= x1 && WG.cy[i] >= y0 && WG.cy[i] <= y1;
+      return { calls, shown: s.buildings.filter((b) => inv(b.hex)).length };
+    };
+    const far = at(DETAIL_Z - 0.4), mid = at((DETAIL_Z + ART_LIVE_Z) / 2), near = at(ART_LIVE_Z + 0.6);
+    window.drawBuilding = real;
+    SETTINGS.autoQuality = true;
+    return { built: n, far, mid, near, detailZ: DETAIL_Z, liveZ: ART_LIVE_Z };
+  });
+  assert(r.far.shown > 30, `a proper town is on screen (${r.far.shown} buildings)`);
+  assert(r.far.calls <= 3, `zoomed out they are simple blocks, not ${r.far.shown} pieces of art (${r.far.calls} drawn)`);
+  assert(r.mid.calls < r.mid.shown / 3, `at middling zoom the art comes from the sprite cache (${r.mid.calls} draws for ${r.mid.shown} buildings)`);
+  assert(r.near.calls >= r.near.shown * 0.8, `up close it is drawn live again, so it animates (${r.near.calls} of ${r.near.shown})`);
+});
+
+await test('nothing off the screen is drawn, however much of it there is', async () => {
+  const r = await G(async () => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    cheats.reveal();
+    const k = s.kingdoms[0];
+    // a hundred armies scattered across a revealed map, none of them in view
+    s.aiArmies = [];
+    for (let i = 0; i < 100; i++) {
+      const at = W.within(k.capital, 60)[i * 7 % 400] ?? k.capital;
+      s.aiArmies.push({ id: 'far' + i, kid: k.id, kind: 'war', units: { swordsman: 20, archer: 0, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 }, hall: 1, at, path: [], prog: 0, status: 'idle', cooldown: 0 });
+    }
+    SETTINGS.graphics = 'high'; SETTINGS.autoQuality = false; GOV.level = 0;
+    CAM.z = 4; CAM.centerOn(s.world.capital); CAM.clamp();
+    const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+    const inv = (i) => WG.cx[i] >= x0 && WG.cx[i] <= x1 && WG.cy[i] >= y0 && WG.cy[i] <= y1;
+    const onScreen = s.aiArmies.filter((a) => inv(a.at)).length;
+    const realB = window.drawBanner, realA = window.drawArmyOnMap;
+    let banners = 0, blocks = 0;
+    window.drawBanner = (...a) => { banners++; return realB(...a); };
+    window.drawArmyOnMap = (...a) => { blocks++; return realA(...a); };
+    drawWorld(ctx, 1, 1 / 60);
+    banners = 0; blocks = 0;
+    drawWorld(ctx, 1, 1 / 60);
+    window.drawBanner = realB; window.drawArmyOnMap = realA;
+    s.aiArmies = [];
+    SETTINGS.autoQuality = true;
+    return { total: 100, onScreen, banners, blocks };
+  });
+  assert(r.onScreen < 20, `most of the hundred armies are off screen (${r.onScreen} in view)`);
+  assert(r.banners <= r.onScreen + s0Divisions, `only what is on screen gets a banner (${r.banners} for ${r.onScreen} armies)`);
+  assert(r.blocks <= r.onScreen + s0Divisions, `and only what is on screen is drawn soldier by soldier (${r.blocks})`);
+});
+
+await test('a fully explored map stops paying for fog, across reloads', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state;
+    cheats.reveal();
+    const full = seenCount;
+    // a world arriving from a save has never called reveal(), so the count has
+    // to be re-derived or the "all explored" shortcut never fires again
+    seenCount = 0;
+    deriveWorld();
+    const afterLoad = seenCount;
+    const real = window.fogLayer;
+    let built = 0;
+    window.fogLayer = () => { built++; return real(); };
+    fogDirty = true;
+    drawFog(ctx); drawFog(ctx);
+    window.fogLayer = real;
+    return { full, N: WG.N, afterLoad, built };
+  });
+  assert(r.full === r.N, `the whole map is explored (${r.full} of ${r.N})`);
+  assert(r.afterLoad === r.N, 'the count survives a world being re-derived from a save');
+  assert(r.built <= 1, `and the fog layer is no longer rebuilt or blitted every frame (${r.built})`);
 });
 
 await test('assets are version-stamped so updates never mix old and new files', async () => {

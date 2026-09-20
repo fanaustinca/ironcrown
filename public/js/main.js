@@ -110,7 +110,7 @@ const cheats = {
   ships(n = 5) { for (const t of SHIP_TYPES) S.harbor[t] += n; return done(`+${n} of every ship`); },
   generals(n = 1) { for (const g of GENERALS) for (let k = 0; k < n; k++) { const r = grantGeneral(g.id); genInst(r.uid).stars = 5; } return done(`+${n} copy of every general (5★)`); },
   items(n = 5) { for (const k of Object.keys(ITEMS)) S.items[k] += n; return done(`+${n} of every item`); },
-  reveal() { S.world.seen.fill(1); fogDirty = true; return done('map revealed'); },
+  reveal() { S.world.seen.fill(1); recountSeen(); return done('map revealed'); },
   time(sec = 600) { window.ironcrown.debug.fastForward(sec); return done(`${sec}s simulated`); },
   speed(x = 1) { setSpeed(clamp(x, 0, 20)); return done(`game speed ×${UI.gameSpeed}`); },
   season(n = 3) { const cal = calendar(); S.time = (Math.floor(S.time / (DAY_LENGTH * 40)) * 40 + n * 10) * DAY_LENGTH + (cal.day - 1) * 0; return done(`season → ${SEASONS[n].name}`); },

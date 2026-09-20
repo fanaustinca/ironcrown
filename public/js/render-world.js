@@ -114,21 +114,28 @@ function drawCastle(g, cx, cy, s, color, big) {
    draw one figure per handful of men so the block stays a block. */
 const ARMY_Z = 3.2;                 // zoom at which the banner opens out into a formation
 const ARMY_MAX_SPRITES = 420;
+/* Eight hosts of a thousand men each would be several thousand figures a frame.
+   The budget is shared out across whatever is actually on screen, and when it
+   runs out the rest stay as banners. */
+const ARMY_FRAME_SPRITES = 900;
+let armyBudget = ARMY_FRAME_SPRITES;
 // Drawn back rank first: engines and bows behind, horse in the middle, foot leading.
 const MARCH_ORDER = ['catapult', 'archer', 'scout', 'horseman', 'pikeman', 'swordsman'];
-function armyRanks(units) {
+function armyRanks(units, cap) {
   let total = 0;
   for (const u of MARCH_ORDER) total += units[u] || 0;
   if (!total) return null;
-  const per = Math.max(1, Math.ceil(total / ARMY_MAX_SPRITES)), list = [];
+  const per = Math.max(1, Math.ceil(total / Math.max(24, Math.min(ARMY_MAX_SPRITES, cap)))), list = [];
   for (const u of MARCH_ORDER) { const n = Math.round((units[u] || 0) / per); for (let k = 0; k < n; k++) list.push(u); }
   if (!list.length) list.push(MARCH_ORDER.find((u) => units[u] > 0));
   return { list, per, total };
 }
 // Returns the half-height of the block in map units, so a banner can sit above it.
 function drawArmyOnMap(g, x, y, units, color, t, moving, face) {
-  const R = armyRanks(units);
+  if (armyBudget <= 0) return 0;
+  const R = armyRanks(units, armyBudget);
   if (!R) return 0;
+  armyBudget -= R.list.length;
   const cols = Math.max(1, Math.round(Math.sqrt(R.list.length * 1.7))), rows = Math.ceil(R.list.length / cols);
   const SPX = 8.4 * SOLDIER_SCALE, SPY = 7.6 * SOLDIER_SCALE;   // ranks close up with the smaller figures
   g.save(); g.translate(x, y); g.scale(BSC, BSC);
@@ -190,6 +197,9 @@ function fogCloudTexture() {
   return fogClouds;
 }
 function drawFog(g) {
+  // Once the whole world is explored the fog layer is entirely transparent, and
+  // blitting it across the screen every frame buys nothing at all.
+  if (seenCount >= WG.N) { if (!fogMask) fogLayer(); return; }
   const hw = W_HEX * SQ3, img = fogLayer();
   const sx = (hw / 2) / FOG_UP, sy = (W_HEX * 1.5) / FOG_UP, oy = W_HEX * 0.25;   // map units per fog pixel
   const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
@@ -386,27 +396,39 @@ function ownedByOwner() {
   for (let i = 0; i < owner.length; i++) { const o = owner[i]; if (o === -1) continue; let l = m.get(o); if (!l) m.set(o, (l = [])); l.push(i); }
   return (ownedGroups = m);
 }
-// Draws only the claimed hexes that are actually on screen.
-function drawTerritory(g, inView, z) {
-  const owner = S.world.owner, colOf = (o) => (o === -2 ? '#f2c14e' : S.kingdoms[o].color);
+/* Borders as cached Path2D shapes. Rebuilding thousands of hex outlines every
+   frame was one of the larger costs in a big empire; now it happens only when
+   the map actually changes (and at most twice a second). */
+let terrPaths = null, terrPathsVer = -2;
+function territoryPaths() {
+  if (terrPaths && terrPathsVer === ownedGroupsVer) return terrPaths;
+  const owner = S.world.owner;
+  terrPaths = [];
   for (const [o, hexes] of ownedByOwner()) {
-    let any = false;
-    g.fillStyle = colOf(o) + '30'; g.beginPath();
-    for (const i of hexes) if (inView(i)) { WG.hexPath(g, i, 1.02); any = true; }
-    if (any) g.fill();
-    if (!any) continue;
-    g.lineCap = 'round'; g.strokeStyle = colOf(o); g.lineWidth = Math.max(1.6, 2.6 / z);
-    g.beginPath();
+    const fill = new Path2D(), line = new Path2D();
     for (const i of hexes) {
-      if (!inView(i)) continue;
+      const s2 = W_HEX * 1.02, x = WG.cx[i], y = WG.cy[i];
+      fill.moveTo(x + HEX_CORNER[0][0] * s2, y + HEX_CORNER[0][1] * s2);
+      for (let k = 1; k < 6; k++) fill.lineTo(x + HEX_CORNER[k][0] * s2, y + HEX_CORNER[k][1] * s2);
+      fill.closePath();
       for (let d = 0; d < 6; d++) {
         const n = WG.nb[i * 6 + d];
         if (n >= 0 && owner[n] === o) continue;
         const [x0, y0] = WG.corner(i, d, 0.94), [x1, y1] = WG.corner(i, d + 1, 0.94);
-        g.moveTo(x0, y0); g.lineTo(x1, y1);
+        line.moveTo(x0, y0); line.lineTo(x1, y1);
       }
     }
-    g.stroke();
+    terrPaths.push({ color: o === -2 ? '#f2c14e' : S.kingdoms[o].color, fill, line });
+  }
+  terrPathsVer = ownedGroupsVer;
+  return terrPaths;
+}
+function drawTerritory(g, inView, z) {
+  ownedByOwner();                       // refresh the index (throttled) before the paths key off it
+  g.lineCap = 'round';
+  for (const P of territoryPaths()) {
+    g.fillStyle = P.color + '30'; g.fill(P.fill);
+    g.strokeStyle = P.color; g.lineWidth = Math.max(1.6, 2.6 / z); g.stroke(P.line);
   }
 }
 
@@ -426,7 +448,8 @@ function drawWorld(g, t, dt) {
   const inView = (i) => WG.cx[i] >= vx0 && WG.cx[i] <= vx1 && WG.cy[i] >= vy0 && WG.cy[i] <= vy1;
   const cap = S.world.capital;
   const occupied = new Set(S.buildings.map((b) => b.hex));
-  for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) occupied.add(b.hex);
+  const nearView = (i, pad) => WG.cx[i] >= vx0 - pad && WG.cx[i] <= vx1 + pad && WG.cy[i] >= vy0 - pad && WG.cy[i] <= vy1 + pad;
+  for (const k of S.kingdoms) if (isSeen(k.capital) && nearView(k.capital, W_HEX * 3 * (3 + k.hall))) for (const b of aiCity(k).buildings) occupied.add(b.hex);
   if (cheapTerrain) {                                    // the whole continent in one image
     blitView(g, atlasComposite(), ATLAS_S);
   }
@@ -452,7 +475,8 @@ function drawWorld(g, t, dt) {
   if (z > 0.6 && !atlasOnly) for (const i of featureHexes()) { const f = feat[i]; if (f && inView(i) && isSeen(i) && !occupied.has(i)) drawFeature(g, i, f, t); }
   if (!atlasOnly) drawCityLayer(g, t, dt, vis, inView);
   const icon = (x, y, fn) => { g.save(); g.translate(x, y); g.scale(es, es); fn(); g.restore(); };
-  const fullArmies = SETTINGS.graphics === 'high' && z >= ARMY_Z;   // every soldier, not a flag
+  const fullArmies = SETTINGS.graphics === 'high' && z >= ARMY_Z && GOV.level < 1;   // every soldier, not a flag
+  armyBudget = ARMY_FRAME_SPRITES;
   // paths of selected entity & visible enemy raids
   const selE = selectedEntity();
   const pathLine = (e, color, dash) => {
@@ -463,20 +487,22 @@ function drawWorld(g, t, dt) {
     const last = e.path[e.path.length - 1];
     g.beginPath(); g.arc(WG.cx[last], WG.cy[last], 8 / z, 0, 7); g.stroke();
   };
-  for (const e of S.divisions.concat(S.fleets)) pathLine(e, e === selE ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)', [6, 6]);
-  for (const p of S.scouts) pathLine(p, p === selE ? 'rgba(127,212,255,.95)' : 'rgba(127,212,255,.4)', [3, 5]);
+  const onScreen = (e) => inView(e.at) || (e.path && e.path.length && inView(e.path[e.path.length - 1]));
+  for (const e of S.divisions.concat(S.fleets)) if (onScreen(e)) pathLine(e, e === selE ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)', [6, 6]);
+  for (const p of S.scouts) if (onScreen(p)) pathLine(p, p === selE ? 'rgba(127,212,255,.95)' : 'rgba(127,212,255,.4)', [3, 5]);
   // detection rings: an army attacks any enemy that walks inside this circle
   for (const d of S.divisions) {
-    if (d.status === 'fighting') continue;
+    if (d.status === 'fighting' || !inView(d.at)) continue;
     const idle = !d.path.length, sel = d === selE, [rx, ry] = entPos(d);
     g.strokeStyle = sel ? 'rgba(242,193,78,.7)' : 'rgba(242,193,78,.24)';
     g.lineWidth = (sel ? 2.5 : 2) / z; g.setLineDash([3 / z, 4 / z]);
     g.beginPath(); g.arc(rx, ry, detectRange(d, idle) * W_HEX * SQ3 * 1.04, 0, 7); g.stroke(); g.setLineDash([]);
   }
-  for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) pathLine(a, 'rgba(229,83,75,.8)', [4, 6]);
-  for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3 / z; g.beginPath(); WG.hexPath(g, a.targetHex, 1.3); g.stroke(); }
+  for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at) && onScreen(a)) pathLine(a, 'rgba(229,83,75,.8)', [4, 6]);
+  for (const a of S.aiArmies) if (a.kind === 'raid' && a.targetHex != null && inView(a.targetHex)) { g.strokeStyle = `rgba(229,83,75,${0.5 + 0.4 * Math.sin(t * 6)})`; g.lineWidth = 3 / z; g.beginPath(); WG.hexPath(g, a.targetHex, 1.3); g.stroke(); }
   // scout parties
   for (const p of S.scouts) {
+    if (!inView(p.at)) continue;
     const [px0, py0] = entPos(p), sel = selE === p;
     g.save(); g.translate(px0, py0); g.scale(es, es); const x = 0, y = 0;
     if (sel) { g.strokeStyle = '#7fd4ff'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 4, 13 + Math.sin(t * 5), 0, 7); g.stroke(); }
@@ -491,14 +517,14 @@ function drawWorld(g, t, dt) {
   }
   // AI forces (only where you can see them)
   for (const a of S.aiArmies) {
-    if (!isSeen(a.at)) continue;
+    if (!isSeen(a.at) || !inView(a.at)) continue;    // a hundred armies on a revealed map, two of them on screen
     if (a.status === 'fighting') continue;
     const [x, y] = entPos(a), k = S.kingdoms[a.kid];
     const top = fullArmies && !isWater(a.at) ? drawArmyOnMap(g, x, y, a.units, k.color, t, a.path.length > 0, a.path.length && WG.cx[a.path[0]] < x ? -1 : 1) : 0;
     icon(x, y - top, () => drawBanner(g, 0, 0, k.color, a.kind === 'raid' ? '⚔' : a.kind === 'guard' ? '🛡' : '', armyHousing(a.units), t, false, a.kind === 'raid' || hostileToPlayer(k)));
   }
   for (const f of S.aiFleets) {
-    if (!isSeen(f.at)) continue;
+    if (!isSeen(f.at) || !inView(f.at)) continue;
     if (f.status === 'fighting') continue;
     const [x, y] = entPos(f), pirate = f.owner === 'pirate';
     const nx = f.path.length ? WG.cx[f.path[0]] : x, main = SHIP_TYPES.slice().reverse().find((st) => f.ships[st] > 0) || 'galley';
@@ -510,7 +536,7 @@ function drawWorld(g, t, dt) {
   }
   // player forces
   for (const f of S.fleets) {
-    if (f.status === 'fighting') continue;
+    if (f.status === 'fighting' || !inView(f.at)) continue;
     const [fx0, fy0] = entPos(f), nx = f.path.length ? WG.cx[f.path[0]] : fx0 + 1;
     g.save(); g.translate(fx0, fy0); g.scale(es, es); const x = 0, y = 0;
     if (f === selE) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 6, 20 + Math.sin(t * 5) * 1.5, 0, 7); g.stroke(); }
@@ -521,7 +547,7 @@ function drawWorld(g, t, dt) {
     g.restore();
   }
   for (const d of S.divisions) {
-    if (d.status === 'fighting') continue;
+    if (d.status === 'fighting' || !inView(d.at)) continue;
     const [dx0, dy0] = entPos(d);
     const water = isWater(d.at);
     const top = fullArmies && !water ? drawArmyOnMap(g, dx0, dy0, d.units, d.color, t, d.path.length > 0, d.path.length && WG.cx[d.path[0]] < dx0 ? -1 : 1) : 0;

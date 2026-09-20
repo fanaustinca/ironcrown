@@ -430,8 +430,10 @@ const Battles = {
   },
 
   draw(g, t) {
+    const [bx0, by0] = CAM.toWorld(0, 0), [bx1, by1] = CAM.toWorld(CW, CH), pad = (BW / 2) * BSC;
     for (const b of this.list) {
       const hx = WG.cx[b.cfg.hex], hy = WG.cy[b.cfg.hex];
+      if (hx < bx0 - pad || hx > bx1 + pad || hy < by0 - pad || hy > by1 + pad) continue;   // off screen
       g.save();
       g.translate(hx - (BW / 2) * BSC, hy - (BH / 2) * BSC);
       g.scale(BSC, BSC);

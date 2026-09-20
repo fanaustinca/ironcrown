@@ -1,4 +1,4 @@
-# 👑 Ironcrown `v3.4.1`
+# 👑 Ironcrown `v3.4.2`
 
 A browser kingdom-strategy game and living world simulation. Build a kingdom on a hex map, research technologies at
 universities, raise armies and navies, group them into divisions and fleets, explore ruins, caves, forts and
@@ -30,7 +30,7 @@ It's pure HTML5 Canvas + vanilla JavaScript with no build step and no dependenci
 | **Graphics** | ✨ High (procedural grass, rock, sand, snow and water textures, hill-shading, water caustics and glints, cloud shadows), 🎨 Classic, or 🔷 Low-poly, switchable live in Settings. |
 | **Armies drawn as armies** | On High graphics, zoom in past 3.2× and a division is no longer a banner with a number: every soldier is drawn, at the size they are in a battle, in ranks — engines and bows behind, horse in the middle, foot leading. Huge hosts draw one figure per handful so the block stays legible. |
 | **Adapts to your machine** | An optional governor (on by default) watches the real frame rate and gives ground when it drops — it stops streaming terrain tiles, then renders fewer pixels, then falls back to the flat world image — and climbs back when there's headroom. There's an FPS chip, and one-click **⚡ Make it fast** in Settings. Cached terrain tiles live on a fixed memory budget so panning can't quietly allocate hundreds of megabytes of textures. |
-| **Built to scale** | A 165,000-hex world is rendered in layers: a whole-continent atlas when zoomed out, streamed terrain tiles at three levels of detail in between, and live hex-by-hex drawing up close. Tile counts, territory bonuses, realm components and pathfinding buffers are all cached so nothing sweeps the whole map per frame, and saves are run-length encoded to a fraction of their raw size. |
+| **Built to scale** | A 165,000-hex world is rendered in layers: a whole-continent atlas when zoomed out, streamed terrain tiles at four levels of detail in between, and live hex-by-hex drawing up close. Buildings follow the same idea — coloured blocks far out, cached sprites in the middle, live animated art up close — and nothing off screen is drawn at all. Tile counts, territory bonuses, realm components and pathfinding buffers are all cached so nothing sweeps the whole map per frame, and saves are run-length encoded to a fraction of their raw size. |
 | **World simulation** | A procedurally generated hex continent with islands, lakes, mountains, hills, forests, deserts and swamps, under a fog of war. **Thirty** AI kingdoms in half a dozen rival alliances expand, upgrade, build, keep guard armies and navy patrols, and march armies on each other and on you. Pirates roam. |
 | **Generals** | 17 generals in 4 rarities, each with Attack / Health / Speed bars. There's one general per division, and each general holds only one post. You can own several copies of a general and merge copies to promote (+★). You can hire more at the Tavern. Specialists and admirals get extra bonuses. |
 | **Diplomacy & alliances** | Gifts, non-aggression treaties, trade pacts, tribute, war and peace. You can join AI alliances or found your own, then invite, donate and chat. Allies reinforce you. |
@@ -65,7 +65,7 @@ public/                 ← the game; GitHub Pages serves this folder
     ui-actions.js       modals, actions, map input (drag / keys / edge / pinch / wheel)
     main.js             game loop, boot, test hooks, dev cheats
 server/server.py        optional backend (stdlib only): static files + /api/save + /api/leaderboard
-tests/e2e.mjs           Playwright headless-browser suite (52 tests + screenshots)
+tests/e2e.mjs           Playwright headless-browser suite (55 tests + screenshots)
 .github/workflows/deploy.yml   CI: run tests → deploy public/ to GitHub Pages
 deploy.sh               one-shot git init + gh repo create + Pages setup
 ```
@@ -107,6 +107,9 @@ The suite covers:
 - ruins exploration
 - a watched capital assault
 - an AI raid march
+- buildings drawn as blocks far out, from the sprite cache in the middle, live up close
+- nothing off screen being drawn, however many armies exist
+- a fully explored map no longer paying for fog, across reloads
 - the tile cache covering the screen and staying inside its memory budget
 - the performance governor stepping quality down under load and back up after
 - armies forming up on their own hexes, with nobody standing in the sea

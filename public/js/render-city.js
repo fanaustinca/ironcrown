@@ -7,6 +7,56 @@
 const villagers = [];
 const popTimers = {};
 const artSize = (b) => (b.type === 'hall' ? K_HEX * 3.1 : K_HEX * 1.75);
+/* ---- building sprites ----
+   The art is lovely and expensive: a few hundred of them in view costs more
+   than the terrain does. Above the glyph threshold but below the zoom where
+   you can actually see a windmill turn, each (type, level, variant) is drawn
+   once into a small canvas and then blitted. Walls link to their neighbours so
+   they are always drawn live. */
+const ART_LIVE_Z = 3.6;             // from here up, art is drawn live and animates
+const SPRITE_CAP = 150;
+const spriteCache = new Map();
+const spriteBox = (b) => { const s = artSize(b); return { s, bx: -s * 0.9, by: -s * 1.3, bw: s * 1.8, bh: s * 2.0 }; };
+function buildingSprite(b, ppu) {
+  const key = `${b.type}|${b.level}|${(b.id | 0) % 4}|${b.color || ''}|${b.build > 0 ? 1 : 0}|${SETTINGS.graphics}|${ppu}`;
+  const hit = spriteCache.get(key);
+  if (hit) { spriteCache.delete(key); spriteCache.set(key, hit); return hit; }
+  const box = spriteBox(b), c = document.createElement('canvas');
+  c.width = Math.max(1, Math.ceil(box.bw * ppu)); c.height = Math.max(1, Math.ceil(box.bh * ppu));
+  const g = c.getContext('2d');
+  g.setTransform(ppu, 0, 0, ppu, -box.bx * ppu, -box.by * ppu);
+  GFX.pat.clear(); GFX.ctx = null;
+  drawBuilding(g, b, -box.s / 2, -box.s * 0.62, box.s, 0);
+  GFX.pat.clear(); GFX.ctx = null;
+  const spr = trimSprite(c, box, ppu);
+  spriteCache.set(key, spr);
+  while (spriteCache.size > SPRITE_CAP) spriteCache.delete(spriteCache.keys().next().value);
+  return spr;
+}
+// The drawing box is generous so nothing clips; this cuts it back to the ink,
+// so a blit moves the pixels of a building and not a screenful of transparency.
+function trimSprite(c, box, ppu) {
+  const g = c.getContext('2d');
+  let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+  try {
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      if (d[(y * c.width + x) * 4 + 3] < 8) continue;
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  } catch { x1 = -1; }
+  if (x1 < 0) return { c, ...box };
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  const t = document.createElement('canvas');
+  t.width = w; t.height = h;
+  t.getContext('2d').drawImage(c, x0, y0, w, h, 0, 0, w, h);
+  return { c: t, s: box.s, bx: box.bx + x0 / ppu, by: box.by + y0 / ppu, bw: w / ppu, bh: h / ppu };
+}
+function drawOnHexCached(g, b, ppu) {
+  const spr = buildingSprite(b, ppu);
+  g.drawImage(spr.c, WG.cx[b.hex] + spr.bx * ART, WG.cy[b.hex] + spr.by * ART, spr.bw * ART, spr.bh * ART);
+}
 // Draw a building's art centred on its map hex (art is authored at K_HEX scale).
 function drawOnHex(g, b, t, ghost) {
   const s = artSize(b);
@@ -15,6 +65,34 @@ function drawOnHex(g, b, t, ghost) {
   g.restore();
 }
 const CAT_DOT = { resource: '#c9a34a', defense: '#9aa0a8', military: '#b5452f', naval: '#3f6fb5', civic: '#e3dccb', core: '#f2c14e' };
+/* Zoomed out you cannot read a farm from a barracks anyway, and drawing four
+   hundred little buildings in full costs more than everything else on screen
+   put together. Below DETAIL_Z each one becomes a two-rectangle block, batched
+   by category so the whole city is a dozen draw calls. */
+const DETAIL_Z = 1.6;
+const CAT_GLYPH = {
+  resource: ['#d8b45c', '#8a6f2e'], defense: ['#b3b7bf', '#6c6f78'], military: ['#c9553d', '#7d2f20'],
+  naval: ['#5b8bd0', '#2b4d7e'], civic: ['#e3dccb', '#a79f8b'], core: ['#f2c14e', '#a8802a'],
+};
+function drawGlyphs(g, list) {
+  const byCat = new Map();
+  for (const b of list) {
+    const cat = BUILDINGS[b.type].cat;
+    let l = byCat.get(cat);
+    if (!l) byCat.set(cat, (l = []));
+    l.push(b);
+  }
+  for (const [cat, items] of byCat) {
+    const [top, side] = CAT_GLYPH[cat] || CAT_GLYPH.civic;
+    const w = W_HEX * (cat === 'defense' ? 0.62 : 0.84), h = W_HEX * 0.62;
+    g.fillStyle = side; g.beginPath();
+    for (const b of items) g.rect(WG.cx[b.hex] - w / 2, WG.cy[b.hex] - h * 0.18, w, h * 0.7);
+    g.fill();
+    g.fillStyle = top; g.beginPath();
+    for (const b of items) g.rect(WG.cx[b.hex] - w / 2, WG.cy[b.hex] - h * 0.62, w, h * 0.46);
+    g.fill();
+  }
+}
 
 /* ---- AI cities: procedural, around each capital, on hexes they own ---- */
 const aiCityCache = new Map();
@@ -40,10 +118,18 @@ function aiCity(k) {
 }
 
 function drawCityLayer(g, t, dt, vis, inView) {
-  const z = CAM.z, cap = S.world.capital, detail = z * W_HEX >= 5;
+  const z = CAM.z, cap = S.world.capital, detail = z >= DETAIL_Z;
   const built = new Set(S.buildings.map((b) => b.hex));
   // plazas
-  const plaza = (c) => { for (const i of [c].concat(WG.neighbors(c))) { if (!inView(i)) continue; g.fillStyle = SETTINGS.graphics === 'high' ? patXform(pattern(g, 'cobble'), 0, 0) : '#b8ab92'; g.beginPath(); WG.hexPath(g, i, 1.02); g.fill(); } };
+  let cobble = null;               // one pattern for every plaza, not one per hex
+  const plaza = (c) => {
+    if (!inView(c)) return;
+    if (!cobble) cobble = SETTINGS.graphics === 'high' ? patXform(pattern(g, 'cobble'), 0, 0) : '#b8ab92';
+    g.fillStyle = cobble;
+    g.beginPath();
+    for (const i of [c].concat(WG.neighbors(c))) WG.hexPath(g, i, 1.02);
+    g.fill();
+  };
   plaza(cap);
   for (const k of S.kingdoms) if (isSeen(k.capital)) plaza(k.capital);
   // cleared hexes & loose rocks on your land (walk your own hexes, not the screen)
@@ -70,9 +156,21 @@ function drawCityLayer(g, t, dt, vis, inView) {
   const list = S.buildings.filter(shown);
   for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) if (shown(b)) list.push(b);
   list.sort((a, b) => WG.cy[a.hex] - WG.cy[b.hex]);
-  for (const b of list) {
-    if (!detail && b.type !== 'hall') { g.fillStyle = b.color ? b.color : CAT_DOT[BUILDINGS[b.type].cat]; g.fillRect(WG.cx[b.hex] - 2.5, WG.cy[b.hex] - 2.5, 5, 5); continue; }
-    drawOnHex(g, b, t);
+  if (detail) {
+    // A whole metropolis on screen gets its (still fully detailed) cached art;
+    // a normal view gets the live, animated version.
+    const liveArt = z >= ART_LIVE_Z && GOV.level < 1 && list.length <= 140;
+    if (liveArt) for (const b of list) drawOnHex(g, b, t);
+    else {
+      const ppu = clamp(Math.ceil(ART * z * DPR * 1.35 * 4) / 4, 0.5, 2);   // quantised, so the cache actually hits
+      for (const b of list) { if (b.type === 'wall') drawOnHex(g, b, t); else drawOnHexCached(g, b, ppu); }
+    }
+  } else {
+    // Keep the halls — there are only a handful in view and they are what you
+    // navigate by — and reduce everything else to a block.
+    const halls = list.filter((b) => b.type === 'hall');
+    drawGlyphs(g, list.filter((b) => b.type !== 'hall'));
+    for (const b of halls) drawOnHex(g, b, t);
   }
   if (UI.placing && h >= 0 && !placementError(UI.placing, h)) { g.globalAlpha = 0.65; drawOnHex(g, { id: 0, type: UI.placing, hex: h, level: 1, build: 0 }, t, true); g.globalAlpha = 1; }
   // production popups

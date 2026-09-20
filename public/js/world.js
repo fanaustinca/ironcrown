@@ -20,7 +20,18 @@ function deriveWorld() {
   }
   for (let h = 0; h < q.length; h++) for (const n of WG.neighbors(q[h])) if (!OCEAN[n] && isWater(n)) { OCEAN[n] = 1; q.push(n); }
   S.world.seenSet = null;
+  recountSeen();
   worldVersion++;
+}
+// `seenCount` drives the fog cache and the "everything is explored" fast path.
+// It is only nudged by reveal(), so it has to be re-derived whenever a world
+// arrives from somewhere else — a save, the server, an import.
+function recountSeen() {
+  const seen = S.world.seen;
+  let n = 0;
+  for (let i = 0; i < seen.length; i++) if (seen[i]) n++;
+  seenCount = n;
+  fogDirty = true;
 }
 let worldVersion = 0;
 
