@@ -236,7 +236,7 @@ function createDivision(name, units, gid) {
   for (const u of Object.keys(take)) S.army[u] -= take[u];
   const d = { id: 'd' + uid(), name: (name || '').trim().slice(0, 24) || `Division ${S.divisions.length + 1}`,
     color: DIVISION_COLORS[S.divisions.length % DIVISION_COLORS.length], units: { ...emptyArmy(), ...take },
-    general: null, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle', formation: 'line', stance: 'advance', target: 'nearest' };
+    general: null, at: S.world.capital, path: [], prog: 0, order: null, status: 'idle', formation: 'line', stance: 'advance', target: 'nearest', guard: false, guardAt: null };
   S.divisions.push(d);
   unassignGeneral(gid, true);
   d.general = gid;

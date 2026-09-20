@@ -75,11 +75,48 @@ function newGame(name) {
   log('Your reign begins. Build up your kingdom, then explore the world map.', 'info');
 }
 
+/* ---- Save encoding ----
+   The world is three arrays of ~165,000 numbers. Written out plainly that is
+   well over a megabyte of JSON, which browser storage will refuse. Terrain
+   becomes one digit per hex and the two sparse arrays are run-length encoded,
+   which brings a whole world down to a few tens of kilobytes. */
+function packRuns(arr) {
+  const out = [];
+  let v = arr[0], n = 0;
+  for (let i = 0; i < arr.length; i++) { if (arr[i] === v) n++; else { out.push(v + 'x' + n); v = arr[i]; n = 1; } }
+  out.push(v + 'x' + n);
+  return out.join(' ');
+}
+function unpackRuns(str, len) {
+  const out = new Array(len);
+  let k = 0;
+  for (const part of String(str).split(' ')) {
+    const cut = part.lastIndexOf('x'), v = +part.slice(0, cut), n = +part.slice(cut + 1);
+    for (let i = 0; i < n && k < len; i++) out[k++] = v;
+  }
+  return out;
+}
+function packState(st) {
+  if (!st.world || st.world.packed) return st;
+  const w = st.world;
+  return { ...st, world: { ...w, packed: 1, terrain: w.terrain.join(''), owner: packRuns(w.owner), seen: packRuns(w.seen), seenSet: undefined } };
+}
+function unpackState(st) {
+  const w = st && st.world;
+  if (!w || !w.packed) return st;
+  const n = WG.N;
+  const terrain = new Array(n);
+  for (let i = 0; i < n; i++) terrain[i] = +w.terrain[i];
+  st.world = { ...w, packed: 0, terrain, owner: unpackRuns(w.owner, n), seen: unpackRuns(w.seen, n) };
+  return st;
+}
+const serialize = (st) => JSON.stringify(packState(st));
+
 function save() {
   if (!S) return false;
   S.savedAt = Date.now();
   S.gameVersion = GAME_VERSION;
-  const ok = storage.set(SAVE_KEY, JSON.stringify(S));
+  const ok = storage.set(SAVE_KEY, serialize(S));
   API.push();
   return ok;
 }
@@ -87,7 +124,7 @@ function load() {
   const raw = storage.get(SAVE_KEY);
   if (!raw) return false;
   try {
-    const data = JSON.parse(raw);
+    const data = unpackState(JSON.parse(raw));
     if (data && data.version === 2) { carryOverV2(data); return true; }
     if (!data || data.version !== SAVE_VERSION) {
       if (data && data.version) UI.oldSave = data.version;
@@ -195,7 +232,7 @@ const API = {
     const now = Date.now();
     if (!force && now - this.lastPush < 15000) return;
     this.lastPush = now;
-    const body = JSON.stringify({ meta: { name: S.name, power: Math.round(totalPower()), hall: hallLevel() }, state: S });
+    const body = JSON.stringify({ meta: { name: S.name, power: Math.round(totalPower()), hall: hallLevel() }, state: packState(S) });
     fetch(`api/save/${this.pid}-${SLOT}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
       .then((r) => { el('sync').classList.toggle('online', r.ok); el('sync-label').textContent = r.ok ? 'synced' : 'local'; })
       .catch(() => {});

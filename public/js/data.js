@@ -5,12 +5,19 @@
    ========================================================================== */
 'use strict';
 
-const GAME_VERSION = '3.3.0';
-const SAVE_VERSION = 3;
+const GAME_VERSION = '3.4.0';
+const SAVE_VERSION = 4;
 
 // ONE map made of small hexes (pointy-top, odd-r offset). Cities, land, sea,
-// armies and battles all live on this single grid.
-const WW = 150, WH = 110, W_HEX = 11;
+// armies and battles all live on this single grid. v3.4 grew it to ten times
+// the area — ~165,000 hexes — at the same hex size, so the world is vast
+// rather than merely finer-grained.
+const WW = 474, WH = 348, W_HEX = 11;
+// The terrain noise is sampled in its own units so that continents keep the
+// same scale however big the grid is; these grow with the map.
+const NW = (50 * WW) / 150, NH = (36 * WH) / 110;
+const MAP_SCALE = Math.sqrt((WW * WH) / (150 * 110));   // ≈3.16: hex distances that used to be tuned for the small map
+const AI_KINGDOM_COUNT = 30;
 const K_HEX = 34;               // reference size the building art is drawn at (scaled onto a map hex)
 const ART = W_HEX / K_HEX;      // art units → map units
 const HEX_BONUS = 0.12;         // resource bonus of one small land hex (terrain table is per 'big' area)
@@ -55,15 +62,15 @@ const BUILDINGS = {
                  desc: 'Settlers pay taxes in gold. Build them anywhere on your land.' },
   warehouse:   { name: 'Warehouse', icon: '📦', cat: 'resource', storage: 0.2, base: { gold: 250, lumber: 300 }, mult: 1.8, time: 6, hall: 2, limit: [0,1,2,2,3,3],
                  desc: '+20% storage capacity per level.' },
-  wall:        { name: 'Wall', icon: '🧱', cat: 'defense', def: 10, base: { lumber: 25, iron: 5 }, mult: 1.6, time: 1, limit: [14,24,34,44,54,64],
+  wall:        { name: 'Wall', icon: '🧱', cat: 'defense', def: 140, base: { lumber: 25, iron: 5 }, mult: 1.6, time: 1, limit: [14,24,34,44,54,64],
                  desc: 'Stone segments that link up with neighbours. Drag to paint a line of walls.' },
-  tower:       { name: 'Archer Tower', icon: '🗼', cat: 'defense', def: 45, base: { gold: 150, lumber: 120 }, mult: 1.8, time: 6, limit: [2,5,8,12,16,20],
+  tower:       { name: 'Archer Tower', icon: '🗼', cat: 'defense', def: 630, base: { gold: 150, lumber: 120 }, mult: 1.8, time: 6, limit: [2,5,8,12,16,20],
                  desc: 'Rains arrows on raiders within 3 hexes and watches the land around it.', vision: 6 },
-  cannon:      { name: 'Cannon', icon: '💣', cat: 'defense', def: 95, base: { gold: 400, iron: 250 }, mult: 1.8, time: 8, hall: 3, limit: [0,0,2,4,7,10],
-                 desc: 'Heavy iron cannon — devastating against massed troops.' },
-  fortress:    { name: 'Fortress', icon: '🏯', cat: 'defense', def: 150, base: { gold: 600, lumber: 400, iron: 250 }, mult: 1.8, time: 12, hall: 2, limit: [0,2,3,5,7,9],
+  cannon:      { name: 'Cannon', icon: '💣', cat: 'defense', def: 1330, base: { gold: 400, iron: 250 }, mult: 1.8, time: 8, hall: 3, limit: [0,0,2,4,7,10],
+                 desc: 'Heavy iron cannon — devastating against massed troops, and it duels enemy towers.' },
+  fortress:    { name: 'Fortress', icon: '🏯', cat: 'defense', def: 2100, base: { gold: 600, lumber: 400, iron: 250 }, mult: 1.8, time: 12, hall: 2, limit: [0,2,3,5,7,9],
                  desc: 'Walled stronghold. Its two turrets join any battle within 3 hexes — perfect for guarding far-off land.' },
-  spire:       { name: 'Arcane Spire', icon: '🔮', cat: 'defense', def: 220, base: { gold: 1500, iron: 600, diamonds: 40 }, mult: 1.9, time: 12, hall: 5, limit: [0,0,0,0,2,4],
+  spire:       { name: 'Arcane Spire', icon: '🔮', cat: 'defense', def: 3080, base: { gold: 1500, iron: 600, diamonds: 40 }, mult: 1.9, time: 12, hall: 5, limit: [0,0,0,0,2,4],
                  desc: 'Crackling crystal spire, the strongest defense in the realm.' },
   archery:     { name: 'Archery Range', icon: '🏹', cat: 'military', trains: ['archer'], base: { gold: 120, lumber: 150 }, mult: 1.8, time: 5, limit: [1,1,1,1,1,1],
                  desc: 'Trains Archers. Level raises archer stats.' },
@@ -95,7 +102,7 @@ const UNITS = {
   swordsman: { name: 'Swordsman', icon: '🗡️', from: 'barracks',   atk: 12, hp: 100, speed: 0.9,  range: 16,  cost: { gold: 35, iron: 15, food: 20 },  time: 4,  housing: 1, vs: { archer: 1.2 } },
   pikeman:   { name: 'Pikeman',   icon: '🔱', from: 'barracks',   atk: 10, hp: 90,  speed: 0.85, range: 24,  cost: { gold: 30, iron: 20, food: 15 },  time: 4,  housing: 1, vs: { horseman: 2.0 } },
   horseman:  { name: 'Horseman',  icon: '🐎', from: 'stable',     atk: 19, hp: 150, speed: 1.8,  range: 18,  cost: { gold: 70, iron: 30, food: 40 },  time: 6,  housing: 2, vs: { archer: 1.5, catapult: 2 } },
-  catapult:  { name: 'Catapult',  icon: '☄️', from: 'workshop',   atk: 42, hp: 130, speed: 0.55, range: 200, cost: { gold: 150, lumber: 120, iron: 60 }, time: 12, housing: 3, vs: { tower: 3 }, splash: true, research: 'siege' },
+  catapult:  { name: 'Catapult',  icon: '☄️', from: 'workshop',   atk: 42, hp: 130, speed: 0.55, range: 200, cost: { gold: 150, lumber: 120, iron: 60 }, time: 12, housing: 3, vs: { tower: 10 }, splash: true, research: 'siege' },
   scout:     { name: 'Scout',     icon: '🔭', from: 'scoutlodge', atk: 2,  hp: 25,  speed: 2.4,  range: 16,  cost: { gold: 40, food: 10 },             time: 3,  housing: 1 },
   seaman:    { name: 'Seaman',    icon: '🧑‍✈️', from: 'port',       atk: 5,  hp: 40,  speed: 1.0,  range: 16,  cost: { gold: 25, food: 15 },             time: 2.5, housing: 1 },
 };
@@ -217,9 +224,30 @@ const RESEARCH = {
 };
 const RESEARCH_CATS = { economy: '💰 Economy', military: '⚔️ Military', naval: '⚓ Naval', civic: '🏛️ Civic' };
 
-const KINGDOM_NAMES = ['Vharn Empire', 'Duchy of Elsmere', 'Karrak Hold', 'Sunspear Dominion', 'The Mistral League', 'Grimhollow', 'Ostara Throne', 'Brightwater Realm'];
-const RULERS = ['King Oswin', 'Duchess Ilse', 'Warlord Karrak', 'Sultana Reyna', 'Doge Venn', 'Baron Grim', 'Queen Ostara', 'Prince Aldo'];
-const KINGDOM_COLORS = ['#d9534f', '#5bc0de', '#9b59b6', '#f0ad4e', '#1abc9c', '#8d6e63', '#e84393', '#7f8c8d'];
+const KINGDOM_NAMES = [
+  'Vharn Empire', 'Duchy of Elsmere', 'Karrak Hold', 'Sunspear Dominion', 'The Mistral League', 'Grimhollow',
+  'Ostara Throne', 'Brightwater Realm', 'Thornmarch', 'Caldera Reach', 'The Amber Coast', 'Vaskin Confederacy',
+  'Highfell', 'Drakemoor', 'Saltspire Republic', 'Iselheim', 'The Verdant Pale', 'Orrindale',
+  'Ashfen Dominion', 'Cobalt Marches', 'Ruvaal Khanate', 'Windrest', 'The Gilded Sound', 'Blackbriar',
+  'Northreach', 'Solmere', 'Tarnhold', 'The Ivory League', 'Ferrowind', 'Umbral Crown',
+  'Larkspur Free State', 'Kethran Sultanate',
+];
+const RULERS = [
+  'King Oswin', 'Duchess Ilse', 'Warlord Karrak', 'Sultana Reyna', 'Doge Venn', 'Baron Grim',
+  'Queen Ostara', 'Prince Aldo', 'Margrave Toll', 'Archon Vela', 'Consul Mira', 'Hetman Vask',
+  'Jarl Hallis', 'Lord Drake', 'Admiral Serra', 'Countess Isel', 'Warden Pell', 'Duke Orrin',
+  'Regent Ashma', 'Elector Bruhn', 'Khan Ruvaal', 'Lady Wren', 'Provost Calen', 'Reeve Thistle',
+  'King Harald', 'Queen Solene', 'Castellan Tarn', 'Chancellor Ivo', 'Despot Ferro', 'Empress Nyx',
+  'Speaker Lark', 'Sultan Kethran',
+];
+const KINGDOM_COLORS = [
+  '#d9534f', '#5bc0de', '#9b59b6', '#f0ad4e', '#1abc9c', '#8d6e63',
+  '#e84393', '#7f8c8d', '#6ab04c', '#eb4d4b', '#4834d4', '#e1b12c',
+  '#22a6b3', '#be2edd', '#ff7979', '#badc58', '#f0932b', '#686de0',
+  '#30336b', '#95afc0', '#c23616', '#0097e6', '#8c7ae6', '#44bd32',
+  '#e58e26', '#b33771', '#3dc1d3', '#fd7272', '#546de5', '#574b90',
+  '#f19066', '#63cdda',
+];
 const PERSONALITIES = {
   aggressive:   { name: 'Aggressive',   w: { expand: 2, upgrade: 1, build: 1, train: 4 } },
   expansionist: { name: 'Expansionist', w: { expand: 5, upgrade: 1, build: 1, train: 2 } },
@@ -247,11 +275,12 @@ const TARGETS = { nearest: 'Nearest', weakest: 'Weakest', ranged: 'Archers & sie
 /* Every defensive building fights as itself: an Archer Tower shoots arrows, a Cannon
    lobs iron, a Fortress mans two turrets, a Spire throws arcane bolts. `siege` towers
    prefer to duel other towers. */
+const DEF_POWER = 14;      // v3.4: fortifications hit and endure ~14x harder than they used to
 const TOWER_STATS = {
-  tower:    { hp: 300, atk: 20, range: 175, rate: 1.25, shot: 'arrow' },
-  cannon:   { hp: 400, atk: 62, range: 250, rate: 2.4,  shot: 'ball',  splash: true, siege: true },
-  fortress: { hp: 750, atk: 26, range: 195, rate: 1.15, shot: 'arrow', count: 2 },
-  spire:    { hp: 600, atk: 80, range: 265, rate: 1.9,  shot: 'bolt',  siege: true },
+  tower:    { hp: 300 * DEF_POWER, atk: 20 * DEF_POWER, range: 175, rate: 1.25, shot: 'arrow' },
+  cannon:   { hp: 400 * DEF_POWER, atk: 62 * DEF_POWER, range: 250, rate: 2.4,  shot: 'ball',  splash: true, siege: true },
+  fortress: { hp: 750 * DEF_POWER, atk: 26 * DEF_POWER, range: 195, rate: 1.15, shot: 'arrow', count: 2 },
+  spire:    { hp: 600 * DEF_POWER, atk: 80 * DEF_POWER, range: 265, rate: 1.9,  shot: 'bolt',  siege: true },
 };
 
 /* ---- Objectives: a guided path through the game's systems (rewards on completion) ---- */

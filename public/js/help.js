@@ -98,7 +98,7 @@ const HELP = [
       <li>🏴‍☠️ <b>Pirates</b> sail from their coves and prey on your fleets and harbour. If your harbour has no ships, they steal gold and blockade your port.</li>
     </ul>` },
   { id: 'world', icon: '🗺️', title: 'World map & exploration', html: `
-    <p>The World map is a procedurally generated hex continent with seas, islands, lakes and varied terrain:</p>
+    <p>The World map is a procedurally generated hex continent of about <b>${fmt(WG.N)} hexes</b> — ten times the area of the old map — with seas, islands, lakes and varied terrain, shared by around <b>${AI_KINGDOM_COUNT} rival kingdoms</b>:</p>
     <ul>${Object.values(TERRAIN).map((t) => `<li><b>${t.name}</b>: ${t.cost === Infinity ? (t.name === 'Sea' ? 'ships only' : 'impassable') : 'move cost ×' + t.cost}${t.bonus ? ' · holding it gives ' + Object.entries(t.bonus).map(([k, v]) => RES_META[k].icon + '+' + (v * 60).toFixed(0) + '/min').join(' ') : ''}</li>`).join('')}</ul>
     <h4>Points of interest</h4>
     <ul>${Object.values(FEATURES).map((f) => `<li>${f.icon} <b>${f.name}</b>: ${f.desc}</li>`).join('')}</ul>
@@ -125,12 +125,14 @@ const HELP = [
         <b>Stance:</b> ${Object.values(STANCES).map((st) => `${st.icon} <b>${st.name}</b> (${st.desc.toLowerCase()})`).join('; ')}.
         <br><b>Target priority:</b> nearest, weakest, archers & siege, cavalry, or towers.</li>
       <li>Set each division's default <b>battle plan</b> on its card. The enemy picks formations to counter yours, for example a Square against cavalry or Skirmish against archers.</li>
+      <li><b>Guard duty.</b> Press <b>🛡️ Guard</b> on a division's card and it takes the ground it is standing on as its post. From then on, if any enemy sets foot on — or marches at — <b>any hex connected to that post</b>, the division leaves on its own to meet them, and walks back to its post once the land is clear. Several guards share the work: the nearest one answers each call.</li>
       <li><b>Your armies watch the ground around them.</b> Every division guards a ring of ${DETECT_R}–${DETECT_R_IDLE} hexes (wider when standing still, wider again with scouts in the ranks), drawn as a dashed circle on the map. Any enemy army that steps inside it is attacked at once, with no order from you. Enemy armies watch just as carefully, so marching past a hostile force starts a fight.</li>
       <li><b>Coalition battles:</b> every force within one hex of a fight joins it. Your nearby divisions fight together, an enemy army fights beside its capital's garrison and towers, and allied kingdoms fight on your side. A third kingdom hostile to both sides turns it into a <b>3-way battle</b>, and each side only fights the teams it's hostile to. <b>Auto-resolve</b> finishes a fight instantly, and Settings can auto-resolve every battle. With several divisions, the <b>All divisions</b> row sets everyone's formation and stance at once.</li>
       <li><b>You only ever command your own troops.</b> Allied kingdoms fighting beside you run themselves, and a war between an ally and someone else is never handed to you — it is resolved without you unless forces of yours are on that field.</li>
       <li>After a battle, the forces that fought rest for 30 seconds, and beaten armies fall back home. Fights don't chain endlessly.</li>
       <li><b>Counters:</b> Pikemen crush cavalry, Horsemen ride down archers and catapults, Archers shred pikemen, Swordsmen beat archers up close, and Catapults smash towers.</li>
       <li><b>Raids:</b> hostile kingdoms send armies at your <b>weakest land</b>, usually undefended outlying hexes and sometimes the capital. A red ⚠ alert shows the target and ETA, and the target hex pulses red. Intercept the army, station a division on the target, or build a watchtower or fortress. Undefended targets are pillaged without a fight.</li>
+      <li><b>Fortifications are formidable.</b> Towers, Cannons, Fortresses and Spires hit and endure about <b>fourteen times</b> harder than they once did — a defended town is a serious undertaking for any army, yours or theirs. Bring <b>Catapults</b> (×10 against stonework), Cannons or Spires if you mean to take one.</li>
       <li><b>Battles are fought on the real landscape.</b> Nothing is faked for the fight: the towers on the field are the buildings that actually stand there, on their real hexes, with their real type and level. Build more of them and more of them fight. <b>Towers shoot at towers too</b> — Cannons and Arcane Spires would rather knock the enemy's stonework down than chase infantry. Walls stiffen your towers; Masonry and Fortification research help too.</li>
       <li><b>Field Medicine</b> saves part of your casualties. War Horns and Healing Salves boost your next battle.</li>
       <li>Winning an assault on a capital loots its treasury and can seize border hexes.</li>
@@ -157,6 +159,12 @@ const HELP = [
   { id: 'shop', icon: '🎁', title: 'Mystery boxes', html: `
     <p>The <b>🎁 Shop</b> sells three boxes, with their odds shown on each card:</p>
     <ul>${BOXES.map((b) => `<li>${b.icon} <b>${b.name}</b> (${Object.entries(b.cost).map(([k, v]) => RES_META[k].icon + v).join('')}): generals ${b.kinds.general}%, items ${b.kinds.item}%, resources ${b.kinds.res}%. Legendary chance ${b.rarity.legendary}%.</li>`).join('')}</ul>` },
+  { id: 'graphics', icon: '✨', title: 'Graphics & the map at scale', html: `
+    <ul>
+      <li><b>Armies are armies.</b> On <b>✨ High</b> graphics, zoom past ${ARMY_Z}× and a division stops being a flag with a number on it: every soldier is drawn, at the size they are in a battle, in ranks — engines and bows behind, horse in the middle, foot leading. Very large hosts draw one figure per handful of men so the block stays legible. Classic and Low-poly keep the cheap banner.</li>
+      <li><b>The world is drawn in layers.</b> Zoomed right out you see a whole-continent image; closer in, terrain streams as tiles at three levels of detail; closest of all it is drawn hex by hex with animated water. This is what keeps a ${fmt(WG.N)}-hex map running smoothly.</li>
+      <li><b>If it stutters:</b> Settings → <b>Render resolution</b> → Performance, and <b>Graphics</b> → Classic or Low-poly. The minimap can be turned off too.</li>
+    </ul>` },
   { id: 'saves', icon: '💾', title: 'Saving, settings & version', html: `
     <ul>
       <li>The game autosaves to this browser every 15 seconds and when you leave. If the optional Python server is running, it also syncs to the cloud and shows a global leaderboard.</li>

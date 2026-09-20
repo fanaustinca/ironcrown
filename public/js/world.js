@@ -27,14 +27,15 @@ let worldVersion = 0;
 function generateWorld() {
   const seed = S.seed, rng = mulberry32(seed ^ 0x5eed);
   const N = WG.N, elev = new Float32Array(N), moist = new Float32Array(N), ridge = new Float32Array(N);
-  const SX = 50 / WW, SY = 36 / WH;   // sample noise in the old 50×36 units → same continents, finer hexes
-  const islands = Array.from({ length: 4 }, (_, k) => ({ c: 50 - 5 - rng() * 5, r: 4 + k * 8.5 + rng() * 3, s: 1.6 + rng() * 1.4 }));
+  const SX = NW / WW, SY = NH / WH;   // noise units per hex — constant, so continents keep their scale as the map grows
+  const nIsles = Math.round(4 * MAP_SCALE * MAP_SCALE);
+  const islands = Array.from({ length: nIsles }, (_, k) => ({ c: NW * (0.62 + rng() * 0.34), r: (NH * (k + 0.5)) / nIsles + rng() * 3, s: 1.6 + rng() * 1.4 }));
   for (let i = 0; i < N; i++) {
-    const c = WG.col(i) * SX, r = WG.row(i) * SY, nx = c / 50, ny = r / 36;
+    const c = WG.col(i) * SX, r = WG.row(i) * SY, nx = c / NW, ny = r / NH;
     const dx = (nx - 0.42) / 0.5, dy = (ny - 0.5) / 0.5;
     let e = fbm(c * 0.1, r * 0.12, seed, 5) * 0.8 + fbm(c * 0.035, r * 0.045, seed + 99, 3) * 0.55 - Math.sqrt(dx * dx + dy * dy) * 0.62;
     for (const is of islands) e += 0.55 * Math.exp(-((dist(c, r, is.c, is.r) / is.s) ** 2));
-    const edge = Math.min(c, r, 50 - 1 - c, 36 - 1 - r);
+    const edge = Math.min(c, r, NW - 1 - c, NH - 1 - r);
     if (edge < 2) e -= (2 - edge) * 0.25;
     elev[i] = e;
     moist[i] = fbm(c * 0.09 + 40, r * 0.1 - 13, seed + 5, 4);
@@ -50,7 +51,7 @@ function generateWorld() {
     else if ((h > 0.55 && ridge[i] > 0.74) || h > 0.86) t = T.MOUNTAIN;
     else if (h > 0.42 && ridge[i] > 0.6) t = T.HILLS;
     else if (h < 0.1 && m > 0.6) t = T.SWAMP;
-    else if (m < 0.38 && rw * SY > 18) t = T.DESERT;
+    else if (m < 0.38 && rw * SY > NH * 0.5) t = T.DESERT;
     else if (m > 0.55) t = T.FOREST;
     else if (m > 0.47) t = T.MEADOW;
     else t = T.PLAINS;
@@ -63,14 +64,14 @@ function generateWorld() {
   let best = -1, bestScore = -1e9;
   for (let i = 0; i < N; i++) {
     const c = WG.col(i), r = WG.row(i);
-    if (!isPassable(i) || c < 18 || c > WW * 0.5 || r < 18 || r > WH - 20) continue;
+    if (!isPassable(i) || c < WW * 0.12 || c > WW * 0.5 || r < WH * 0.16 || r > WH * 0.82) continue;
     const ocean = WG.neighbors(i).filter((n) => OCEAN[n]);
     if (!ocean.length || hash2(i, 3, seed) > 0.35) continue;   // sample a subset of the coast
     const room = WG.within(i, 7).filter(isPassable).length;
     const score = room + hash2(i, 1, seed) * 8 - Math.abs(r - WH / 2) * 0.35;
     if (score > bestScore) { bestScore = score; best = i; }
   }
-  if (best < 0) best = WG.idx(36, Math.floor(WH / 2));
+  if (best < 0) best = WG.idx(Math.floor(WW * 0.24), Math.floor(WH / 2));
   const cap = best;
   S.world.capital = cap;
   S.world.terrain[cap] = T.PLAINS;
@@ -85,10 +86,11 @@ function generateWorld() {
   for (let h = 0; h < q.length; h++) for (const n of WG.neighbors(q[h])) if (!main[n] && isPassable(n)) { main[n] = 1; q.push(n); }
 
   // --- AI kingdoms ---
-  const caps = [];
-  for (let pass = 0; pass < 3 && caps.length < 6; pass++) {
-    const minP = [27, 21, 15][pass], minK = [21, 18, 12][pass];
-    for (let tries = 0; tries < 6000 && caps.length < 6; tries++) {
+  const caps = [], want = Math.min(AI_KINGDOM_COUNT, KINGDOM_NAMES.length);
+  const M = MAP_SCALE;
+  for (let pass = 0; pass < 3 && caps.length < want; pass++) {
+    const minP = [30 * M, 22 * M, 14 * M][pass], minK = [26, 20, 13][pass];
+    for (let tries = 0; tries < 40000 && caps.length < want; tries++) {
       const i = Math.floor(rng() * N);
       if (!main[i] || terrain[i] === T.SWAMP || WG.dist(i, cap) < minP || caps.some((k) => WG.dist(k, i) < minK)) continue;
       const c = WG.col(i), r = WG.row(i);
@@ -119,22 +121,23 @@ function generateWorld() {
   for (let i = 0; i < N; i++) (isWater(i) ? water : land).push(i);
   const place = (list, n, test, make) => {
     let placed = 0;
-    for (let tries = 0; tries < 4000 && placed < n; tries++) {
+    for (let tries = 0; tries < 400 * n + 4000 && placed < n; tries++) {
       const i = list[Math.floor(rng() * list.length)];
       if (free(i) && test(i)) { feat[i] = make(i); placed++; }
     }
   };
-  const tierOf = (i) => clamp(Math.ceil(WG.dist(i, cap) / 27), 1, 3);
+  const tierOf = (i) => clamp(Math.ceil(WG.dist(i, cap) / (27 * M)), 1, 3);
+  const many = (n) => Math.round(n * M * M);
   place(land, Math.round(land.length * 0.004), (i) => [T.HILLS, T.DESERT, T.PLAINS].includes(terrain[i]), () => ({ type: 'goldvein' }));
-  place(land, 20, (i) => isPassable(i) && (terrain[i] === T.HILLS || WG.neighbors(i).some((n) => terrain[n] === T.MOUNTAIN)) && farFromCapitals(i, 8),
+  place(land, many(20), (i) => isPassable(i) && (terrain[i] === T.HILLS || WG.neighbors(i).some((n) => terrain[n] === T.MOUNTAIN)) && farFromCapitals(i, 8),
     () => ({ type: 'cave', mineral: weighted({ iron: 5, gold: 3, gems: 2 }), explored: false }));
   // Island gem caves & pirate coves
   const islandLand = land.filter((i) => !main[i] && isPassable(i));
-  place(islandLand, 3, () => true, () => ({ type: 'cave', mineral: 'gems', explored: false }));
-  place(islandLand, 2, (i) => WG.neighbors(i).some((n) => OCEAN[n]), () => ({ type: 'cove', power: Math.round(380 + rng() * 260), destroyed: false }));
-  place(land, 14, (i) => isPassable(i) && farFromCapitals(i, 9), (i) => { const t = tierOf(i); return { type: 'ruins', tier: t, guard: Math.round(50 * t ** 1.7 + rng() * 40), looted: false }; });
-  place(land, 5, (i) => isPassable(i) && farFromCapitals(i, 12) && main[i], (i) => { const t = tierOf(i); return { type: 'fort', tier: t, guard: Math.round(160 + 140 * t + rng() * 60), captured: false }; });
-  place(water, 14, (i) => OCEAN[i] && WDEPTH[i] >= 2 && WG.dist(i, cap) >= 9, (i) => ({ type: 'wreck', tier: tierOf(i), salvaged: false }));
+  place(islandLand, many(3), () => true, () => ({ type: 'cave', mineral: 'gems', explored: false }));
+  place(islandLand, many(2), (i) => WG.neighbors(i).some((n) => OCEAN[n]), () => ({ type: 'cove', power: Math.round(380 + rng() * 260), destroyed: false }));
+  place(land, many(14), (i) => isPassable(i) && farFromCapitals(i, 9), (i) => { const t = tierOf(i); return { type: 'ruins', tier: t, guard: Math.round(50 * t ** 1.7 + rng() * 40), looted: false }; });
+  place(land, many(5), (i) => isPassable(i) && farFromCapitals(i, 12) && main[i], (i) => { const t = tierOf(i); return { type: 'fort', tier: t, guard: Math.round(160 + 140 * t + rng() * 60), captured: false }; });
+  place(water, many(14), (i) => OCEAN[i] && WDEPTH[i] >= 2 && WG.dist(i, cap) >= 9, (i) => ({ type: 'wreck', tier: tierOf(i), salvaged: false }));
   reveal(cap, 10);
   deriveWorld();
 }
@@ -152,17 +155,71 @@ function reveal(i, r) {
 }
 let fogDirty = true, seenCount = 0;
 const isSeen = (i) => i >= 0 && S.world.seen[i] === 1;
-const playerTiles = () => S.world.owner.reduce((s, o) => s + (o === -2 ? 1 : 0), 0);
-const kingdomTiles = (id) => S.world.owner.reduce((s, o) => s + (o === id ? 1 : 0), 0);
 const visionBonus = () => R('cartography');
 
-// Distance from every hex to your nearest owned hex, rebuilt only when the map changes.
+/* ---- Ownership caches ----
+   On a 165,000-hex map a full scan is far too expensive to do per frame, and
+   `rates()`, the claim panel and the kingdom list all want tile counts. Both
+   counters are recomputed once per change instead: `landVersion` ticks only
+   when YOUR land changes, `worldVersion` when anyone's does. */
+let landVersion = 0, featVersion = 0;
+function ownedChanged() { worldVersion++; landVersion++; }
+function featChanged() { featVersion++; }
+let tileCount = null, tileCountVer = -1;
+function tileCounts() {
+  if (tileCountVer === worldVersion && tileCount) return tileCount;
+  tileCountVer = worldVersion;
+  const owner = S.world.owner, m = new Map();
+  for (let i = 0; i < owner.length; i++) { const o = owner[i]; if (o !== -1) m.set(o, (m.get(o) || 0) + 1); }
+  tileCount = m;
+  return m;
+}
+const playerTiles = () => tileCounts().get(-2) || 0;
+const kingdomTiles = (id) => tileCounts().get(id) || 0;
+// The list of hexes you own, so callers can walk your realm instead of the world.
+let ownedList = null, ownedListVer = -1;
+function playerLand() {
+  if (ownedListVer === landVersion && ownedList) return ownedList;
+  ownedListVer = landVersion;
+  const owner = S.world.owner, out = [];
+  for (let i = 0; i < owner.length; i++) if (owner[i] === -2) out.push(i);
+  return (ownedList = out);
+}
+
+// Distance from every hex to your nearest owned hex, rebuilt only when YOUR land changes.
 let terrDist = null, terrDistVer = -1;
 function territoryField() {
-  if (terrDistVer !== worldVersion || !terrDist) { terrDist = WG.distanceField((j) => S.world.owner[j] === -2, 40); terrDistVer = worldVersion; }
+  if (terrDistVer !== landVersion || !terrDist) { terrDist = WG.distanceField((j) => S.world.owner[j] === -2, 40); terrDistVer = landVersion; }
   return terrDist;
 }
 function distToTerritory(i) { return territoryField()[i]; }
+
+/* Your realm can be several separate blocks of land. Number them, so a division
+   on guard duty knows which stretch of border it answers for. */
+let landComp = null, landCompVer = -1, landCompCount = 0;
+function territoryComponents() {
+  if (landCompVer === landVersion && landComp) return landComp;
+  landCompVer = landVersion;
+  const owner = S.world.owner, comp = new Int32Array(owner.length).fill(-1);
+  let n = 0;
+  for (let i = 0; i < owner.length; i++) {
+    if (owner[i] !== -2 || comp[i] >= 0) continue;
+    const q = [i];
+    comp[i] = n;
+    for (let h = 0; h < q.length; h++) for (const j of WG.neighbors(q[h])) if (owner[j] === -2 && comp[j] < 0) { comp[j] = n; q.push(j); }
+    n++;
+  }
+  landCompCount = n;
+  landComp = comp;
+  return comp;
+}
+// Which block of your realm a hex belongs to, or the nearest one within `r` hexes.
+function componentNear(hex, r = 3) {
+  const comp = territoryComponents();
+  if (comp[hex] >= 0) return comp[hex];
+  for (const j of WG.within(hex, r)) if (comp[j] >= 0) return comp[j];
+  return -1;
+}
 
 /* ---- Expansion: settling neutral land ----
    Most of the world is unclaimed. Settlers will walk a few hexes past your
@@ -225,7 +282,7 @@ function claimTile(i, r = 1, free) {
   reveal(i, 2);
   log(`Claimed ${cl.length} hexes of ${TERRAIN[S.world.terrain[i]].name} at ${hexName(i)}.`, 'good');
   toast(`🏳️ ${cl.length} hexes claimed!`, 'good');
-  worldVersion++;
+  ownedChanged();
   for (const j of cl) markChunks(j);
   UI.panelDirty = true;
   return true;
@@ -248,7 +305,7 @@ function dispatchScouts(n, dest) {
 function scoutEnter(p) {
   reveal(p.at, scoutRadius());
   const f = S.world.feat[p.at];
-  if (f && f.type === 'cave' && !f.explored) { f.explored = true; log(`Scouts found ${MINERALS[f.mineral].name} in a cave!`, 'good'); toast(`🕳️ Scouts found ${MINERALS[f.mineral].name}`, 'good'); }
+  if (f && f.type === 'cave' && !f.explored) { f.explored = true; featChanged(); log(`Scouts found ${MINERALS[f.mineral].name} in a cave!`, 'good'); toast(`🕳️ Scouts found ${MINERALS[f.mineral].name}`, 'good'); }
   for (const k of S.kingdoms) if (WG.dist(k.capital, p.at) <= scoutRadius() + 2) { if (!S.intel[k.id] || S.time - S.intel[k.id].t > 60) log(`Scouts gathered intel on ${k.name}.`, 'info'); gatherIntel(k); }
   const o = S.world.owner[p.at];
   if (o >= 0 && Math.random() < 0.015 * (hostileToPlayer(S.kingdoms[o]) ? 2 : 1) * (1 - 0.25 * R('espionage'))) {
@@ -269,14 +326,22 @@ function scoutArrive(p) {
 function gatherIntel(k) {
   S.intel[k.id] = { t: S.time, power: Math.round(k.power), defense: Math.round(k.defense), navy: Math.round(k.navy), hall: k.hall, res: { ...k.res }, tiles: kingdomTiles(k.id) };
 }
+// Hand one border hex from `fromId` to `toId`. Only the loser's own neighbourhood
+// is scanned — a full sweep of 165,000 hexes for a single tile would be absurd.
 function transferBorderTile(fromId, toId) {
   const { owner } = S.world;
   const home = fromId === -2 ? S.world.capital : S.kingdoms[fromId] && S.kingdoms[fromId].capital;
-  for (let i = 0; i < owner.length; i++) {
-    if (owner[i] !== fromId || i === home) continue;
-    if (WG.neighbors(i).some((n) => owner[n] === toId)) { owner[i] = toId; worldVersion++; return i; }
-  }
-  return -1;
+  const near = home >= 0 ? WG.within(home, 60) : null;
+  const scan = (list) => {
+    for (const i of list) {
+      if (owner[i] !== fromId || i === home) continue;
+      if (WG.neighbors(i).some((n) => owner[n] === toId)) { owner[i] = toId; ownedChanged(); return i; }
+    }
+    return -1;
+  };
+  const hit = near ? scan(near) : -1;
+  if (hit >= 0) return hit;
+  return scan({ *[Symbol.iterator]() { for (let i = 0; i < owner.length; i++) yield i; } });
 }
 
 /* ---- Docks & defense on the one grid ---- */

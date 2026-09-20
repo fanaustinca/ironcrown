@@ -107,6 +107,40 @@ function drawCastle(g, cx, cy, s, color, big) {
   if (big) { g.fillStyle = color; g.fillRect(cx + s * 0.28, cy - s * 0.52, s * 0.08, s * 0.4); }
   g.fillStyle = '#3a2b1a'; g.fillRect(cx - s * 0.07, cy + s * 0.1, s * 0.14, s * 0.2);
 }
+/* ---- Armies drawn as armies ----
+   On High graphics, a zoomed-in army is not a flag with a number on it: every
+   soldier is there, at exactly the size they are in a battle, drawn up in ranks
+   with the spearmen, horse and engines where they would stand. Very large hosts
+   draw one figure per handful of men so the block stays a block. */
+const ARMY_Z = 3.2;                 // zoom at which the banner opens out into a formation
+const ARMY_MAX_SPRITES = 420;
+// Drawn back rank first: engines and bows behind, horse in the middle, foot leading.
+const MARCH_ORDER = ['catapult', 'archer', 'scout', 'horseman', 'pikeman', 'swordsman'];
+function armyRanks(units) {
+  let total = 0;
+  for (const u of MARCH_ORDER) total += units[u] || 0;
+  if (!total) return null;
+  const per = Math.max(1, Math.ceil(total / ARMY_MAX_SPRITES)), list = [];
+  for (const u of MARCH_ORDER) { const n = Math.round((units[u] || 0) / per); for (let k = 0; k < n; k++) list.push(u); }
+  if (!list.length) list.push(MARCH_ORDER.find((u) => units[u] > 0));
+  return { list, per, total };
+}
+// Returns the half-height of the block in map units, so a banner can sit above it.
+function drawArmyOnMap(g, x, y, units, color, t, moving, face) {
+  const R = armyRanks(units);
+  if (!R) return 0;
+  const cols = Math.max(1, Math.round(Math.sqrt(R.list.length * 1.7))), rows = Math.ceil(R.list.length / cols);
+  const SPX = 8.4, SPY = 7.6;        // battlefield units between neighbours in the ranks
+  g.save(); g.translate(x, y); g.scale(BSC, BSC);
+  R.list.forEach((u, k) => {
+    const c = k % cols, r = (k / cols) | 0;
+    const bx = (c - (cols - 1) / 2) * SPX + (hash2(k, 7) - 0.5) * 3.2;
+    const by = (r - (rows - 1) / 2) * SPY + (hash2(k, 8) - 0.5) * 2.4;
+    drawSoldier(g, bx, by, u, color, face, moving ? t * 2.4 + k * 0.6 : k * 0.6, false, false);
+  });
+  g.restore();
+  return (((rows - 1) / 2) * SPY + 13) * BSC;
+}
 function drawBanner(g, x, y, color, icon, count, t, selected, enemy) {
   shadow(g, x, y + 8, 10, 3);
   if (selected) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(x, y + 2, 16 + Math.sin(t * 5) * 1.5, 0, 7); g.stroke(); }
@@ -122,7 +156,7 @@ function drawBanner(g, x, y, color, icon, count, t, selected, enemy) {
    upscaled with smoothing for soft edges, then textured with pre-rendered clouds.
    A rebuild touches ~16k pixels — well under a millisecond. ---- */
 let fogMask = null, fogCanvas = null, fogClouds = null, fogBuiltAt = -1e9;
-const FOG_UP = 4;   // mask pixels → fog canvas pixels
+const FOG_UP = WG.N > 60000 ? 2 : 4;   // mask pixels → fog canvas pixels (smaller on the big map)
 function fogLayer() {
   if (fogCanvas && (!fogDirty || performance.now() - fogBuiltAt < 250)) return fogCanvas;
   fogDirty = false; fogBuiltAt = performance.now();
@@ -173,56 +207,66 @@ function blitView(g, img, scale) {
   blitCrop(g, img, scale, x0 - 4, y0 - 4, x1 - x0 + 8, y1 - y0 + 8);
 }
 
-/* ---- zoomed-out LOD: the whole 16k-hex terrain cached as one image ---- */
+/* ---- Whole-world atlas ----
+   A full-resolution image of a 165,000-hex world would be ~200 MB, so the
+   zoomed-far-out view is a small flat-colour mosaic instead: one rectangle per
+   hex, batched by colour, sized to a fixed pixel budget whatever the map. It is
+   also the instant stand-in while detailed tiles stream in. */
 const LIVE_Z = 1.8;                   // at or above this zoom the terrain is drawn live, hex by hex
-let terrainBmp = null, terrainBmpKey = '', ownerBmp = null, ownerBmpVer = -1, ownerBmpAt = -1e9;
-// Built in row slices across frames; the previous image stays on screen until the new one is ready.
-let terrainJob = null;
-function terrainBitmap() {
-  const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}|${SETTINGS.showGrid}`;
-  if (terrainBmp && key === terrainBmpKey && !terrainJob) return terrainBmp;
-  if (!terrainJob || terrainJob.key !== key) {
+const ATLAS_Z = 0.55;                 // below this zoom the atlas is all you see
+const ATLAS_S = clamp(Math.sqrt(4.2e6 / (WG.pw * WG.ph)), 0.06, 1);
+const hexRect = (g, i, w, h) => g.rect(WG.cx[i] - w / 2, WG.cy[i] - h / 2, w, h);
+let atlasBmp = null, atlasKey = '', atlasJob = null;
+function worldAtlas() {
+  const key = `${S.seed}|${WG.N}`;
+  if (atlasBmp && key === atlasKey && !atlasJob) return atlasBmp;
+  if (!atlasJob || atlasJob.key !== key) {
     const c = document.createElement('canvas');
-    c.width = Math.ceil(WG.pw); c.height = Math.ceil(WG.ph);
+    c.width = Math.ceil(WG.pw * ATLAS_S); c.height = Math.ceil(WG.ph * ATLAS_S);
     const g = c.getContext('2d');
-    g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, c.width, c.height);
-    terrainJob = { key, c, g, row: 0 };
+    g.setTransform(ATLAS_S, 0, 0, ATLAS_S, 0, 0);
+    g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, WG.pw, WG.ph);
+    atlasJob = { key, c, g, row: 0 };
   }
-  const J = terrainJob, terrain = S.world.terrain, isLandW = (i) => terrain[i] !== T.WATER;
-  const first = !terrainBmp, t0 = performance.now();
-  // the very first build happens in one go (loading); later rebuilds take ~8 ms per frame
-  while (J.row < WG.H && (first || performance.now() - t0 < 8)) {
-    const r0 = J.row, r1 = Math.min(WG.H, r0 + 6);
-    const band = [];
-    for (let r = Math.max(0, r0 - 2); r < Math.min(WG.H, r1 + 2); r++) for (let q = 0; q < WG.W; q++) band.push(r * WG.W + q);
-    const own = band.filter((i) => WG.row(i) >= r0 && WG.row(i) < r1);
-    J.g.save();
-    J.g.beginPath(); J.g.rect(0, r0 === 0 ? 0 : WG.cy[r0 * WG.W] - W_HEX * 0.75, J.c.width, (r1 === WG.H ? J.c.height : WG.cy[(r1 - 1) * WG.W] + W_HEX * 0.75) - (r0 === 0 ? 0 : WG.cy[r0 * WG.W] - W_HEX * 0.75)); J.g.clip();
-    GFX.pat.clear(); GFX.ctx = null;
-    drawTerrainBase(J.g, WG, band, isLandW, WDEPTH, worldLandColor, S.seed + 1, 0, (i) => WORLD_TEX[terrain[i]], worldShade);
-    for (const i of band) if (isLandW(i)) drawTerrainDetail(J.g, i, 0);
-    if (SETTINGS.showGrid) { J.g.strokeStyle = 'rgba(0,0,0,.08)'; J.g.lineWidth = 0.7; J.g.beginPath(); for (const i of own) if (isLandW(i)) WG.hexPath(J.g, i, 0.99); J.g.stroke(); }
-    J.g.restore();
+  const J = atlasJob, terrain = S.world.terrain, first = !atlasBmp, t0 = performance.now();
+  const w = W_HEX * SQ3 * 1.02, h = W_HEX * 1.56;
+  while (J.row < WG.H && (first || performance.now() - t0 < 7)) {
+    const r1 = Math.min(WG.H, J.row + 40), byCol = new Map();
+    for (let r = J.row; r < r1; r++) for (let q = 0; q < WG.W; q++) {
+      const i = r * WG.W + q, t = terrain[i];
+      const col = t === T.WATER ? DEPTH_COLORS[Math.min(WDEPTH[i], 7) - 1] : TERRAIN[t].color;
+      let list = byCol.get(col);
+      if (!list) byCol.set(col, (list = []));
+      list.push(i);
+    }
+    for (const [col, list] of byCol) { J.g.fillStyle = col; J.g.beginPath(); for (const i of list) hexRect(J.g, i, w, h); J.g.fill(); }
     J.row = r1;
   }
-  GFX.pat.clear(); GFX.ctx = null;
-  if (J.row >= WG.H) { terrainBmp = J.c; terrainBmpKey = J.key; terrainJob = null; }
-  return terrainBmp || J.c;
+  if (J.row >= WG.H) { atlasBmp = J.c; atlasKey = J.key; atlasJob = null; }
+  return atlasBmp || J.c;
 }
+// The same trick for borders: flat blocks of each realm's colour, only while zoomed far out.
+let ownerBmp = null, ownerBmpVer = -1, ownerBmpAt = -1e9;
 function ownerBitmap() {
-  if (ownerBmp && (ownerBmpVer === worldVersion || performance.now() - ownerBmpAt < 1000)) return ownerBmp;
+  if (ownerBmp && (ownerBmpVer === worldVersion || performance.now() - ownerBmpAt < 2500)) return ownerBmp;
   ownerBmpVer = worldVersion; ownerBmpAt = performance.now();
   const c = ownerBmp || document.createElement('canvas');
-  c.width = Math.ceil(WG.pw / 2); c.height = Math.ceil(WG.ph / 2);
+  c.width = Math.ceil(WG.pw * ATLAS_S); c.height = Math.ceil(WG.ph * ATLAS_S);
   const g = c.getContext('2d');
-  g.setTransform(0.5, 0, 0, 0.5, 0, 0); g.clearRect(0, 0, WG.pw, WG.ph);
-  drawTerritory(g, Array.from({ length: WG.N }, (_, i) => i), 1.2);
+  g.setTransform(ATLAS_S, 0, 0, ATLAS_S, 0, 0); g.clearRect(0, 0, WG.pw, WG.ph);
+  const owner = S.world.owner, byOwner = new Map(), w = W_HEX * SQ3 * 1.02, h = W_HEX * 1.56;
+  for (let i = 0; i < owner.length; i++) { const o = owner[i]; if (o === -1) continue; let l = byOwner.get(o); if (!l) byOwner.set(o, (l = [])); l.push(i); }
+  for (const [o, list] of byOwner) {
+    g.fillStyle = (o === -2 ? '#f2c14e' : S.kingdoms[o].color) + '66';
+    g.beginPath(); for (const i of list) hexRect(g, i, w, h); g.fill();
+  }
   ownerBmp = c;
   return c;
 }
-/* ---- zoomed-in LOD: terrain cached in map tiles ("chunks"), rebuilt only when they change ---- */
-const LODS = [{ maxZ: 3.2, S: 2.5, size: 128, cap: 90 }, { maxZ: Infinity, S: 6, size: 96, cap: 44 }];
-const chunkCache = [new Map(), new Map()], chunkDirty = new Set();
+/* ---- zoomed-in LOD: terrain cached in map tiles ("chunks"), rebuilt only when they change ----
+   The coarse tier covers the mid zooms the old whole-world bitmap used to. */
+const LODS = [{ maxZ: LIVE_Z, S: 1.2, size: 384, cap: 40 }, { maxZ: 3.2, S: 2.5, size: 128, cap: 90 }, { maxZ: Infinity, S: 6, size: 96, cap: 44 }];
+const chunkCache = LODS.map(() => new Map()), chunkDirty = new Set();
 let chunkKey = '';
 // Invalidate the tiles around a hex (buildings/clearings change which decorations show).
 function markChunks(i) {
@@ -253,7 +297,9 @@ function renderChunk(L, cx, cy, occupied) {
 function drawChunks(g, z, occupied) {
   const key = `${calendar().seasonIdx}|${SETTINGS.graphics}|${S.seed}|${SETTINGS.showGrid}`;
   if (key !== chunkKey) { chunkKey = key; chunkCache.forEach((m) => m.clear()); chunkDirty.clear(); }
-  const li = z < LODS[0].maxZ ? 0 : 1, L = LODS[li], cache = chunkCache[li];
+  let li = 0;
+  while (li < LODS.length - 1 && z >= LODS[li].maxZ) li++;
+  const L = LODS[li], cache = chunkCache[li];
   for (const k of chunkDirty) { if (k.startsWith(L.size + ':')) { cache.delete(k.slice(k.indexOf(':') + 1)); chunkDirty.delete(k); } }
   const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
   const cx0 = Math.floor(x0 / L.size), cx1 = Math.floor(x1 / L.size), cy0 = Math.floor(y0 / L.size), cy1 = Math.floor(y1 / L.size);
@@ -265,7 +311,7 @@ function drawChunks(g, z, occupied) {
     const k = cx + ',' + cy;
     let c = cache.get(k);
     if (!c && performance.now() - t0 < 6) { c = renderChunk(L, cx, cy, occupied); cache.set(k, c); }
-    if (!c) { blitCrop(g, terrainBitmap(), 1, cx * L.size, cy * L.size, L.size, L.size); continue; }
+    if (!c) { blitCrop(g, worldAtlas(), ATLAS_S, cx * L.size, cy * L.size, L.size, L.size); continue; }
     cache.delete(k); cache.set(k, c);                 // LRU touch
     g.drawImage(c, cx * L.size, cy * L.size, L.size, L.size);
   }
@@ -304,31 +350,35 @@ function drawWorld(g, t, dt) {
   g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH);
   cam.apply(g);
   if (shakeAmt > 0) { g.translate(rand(-shakeAmt, shakeAmt) / z, rand(-shakeAmt, shakeAmt) / z); shakeAmt *= 0.85; if (shakeAmt < 0.3) shakeAmt = 0; }
-  const vis = cam.visible(1), isLandW = (i) => terrain[i] !== T.WATER, live = z >= LIVE_Z;
+  const atlasOnly = z < ATLAS_Z, live = z >= LIVE_Z;
+  const vis = atlasOnly ? [] : cam.visible(1), isLandW = (i) => terrain[i] !== T.WATER;
   const cap = S.world.capital;
   const occupied = new Set(S.buildings.map((b) => b.hex));
   for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) occupied.add(b.hex);
-  if (live) {
-    drawChunks(g, z, occupied);                          // (draws a cropped fallback only where tiles are still missing)
-    if (SETTINGS.graphics === 'high' && z >= 2.4) {       // animated water on top of the cached tiles
-      const water = vis.filter((i) => !isLandW(i) && WDEPTH[i] <= 4);
-      if (water.length) {
-        g.save(); g.beginPath(); for (const i of water) { g.moveTo(WG.cx[i] + W_HEX * 1.2, WG.cy[i]); g.arc(WG.cx[i], WG.cy[i], W_HEX * 1.2, 0, Math.PI * 2); } g.clip();
-        g.globalAlpha = 0.28; g.fillStyle = patXform(pattern(g, 'water'), t * 7, t * 2); g.fillRect(-1e4, -1e4, 3e4, 3e4); g.globalAlpha = 1; g.restore();
-      }
-    }
-    g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 0.6;
-    g.beginPath();
-    for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 2, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 3 + o, y); g.quadraticCurveTo(x + o, y - 1.2, x + 3 + o, y); }
-    g.stroke();
-    drawTerritory(g, vis, z);
+  if (atlasOnly) {                                       // the whole continent at a glance
+    blitView(g, worldAtlas(), ATLAS_S);
+    blitView(g, ownerBitmap(), ATLAS_S);
   } else {
-    blitView(g, terrainBitmap(), 1);
-    blitView(g, ownerBitmap(), 0.5);
+    drawChunks(g, z, occupied);                          // (draws a cropped fallback only where tiles are still missing)
+    if (live) {
+      if (SETTINGS.graphics === 'high' && z >= 2.4) {     // animated water on top of the cached tiles
+        const water = vis.filter((i) => !isLandW(i) && WDEPTH[i] <= 4);
+        if (water.length) {
+          g.save(); g.beginPath(); for (const i of water) { g.moveTo(WG.cx[i] + W_HEX * 1.2, WG.cy[i]); g.arc(WG.cx[i], WG.cy[i], W_HEX * 1.2, 0, Math.PI * 2); } g.clip();
+          g.globalAlpha = 0.28; g.fillStyle = patXform(pattern(g, 'water'), t * 7, t * 2); g.fillRect(-1e4, -1e4, 3e4, 3e4); g.globalAlpha = 1; g.restore();
+        }
+      }
+      g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 0.6;
+      g.beginPath();
+      for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 2, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 3 + o, y); g.quadraticCurveTo(x + o, y - 1.2, x + 3 + o, y); }
+      g.stroke();
+    }
+    drawTerritory(g, vis, z);
   }
   if (z > 0.6) for (const i of vis) { const f = feat[i]; if (f && isSeen(i) && !occupied.has(i)) drawFeature(g, i, f, t); }
-  drawCityLayer(g, t, dt, vis);
+  if (!atlasOnly) drawCityLayer(g, t, dt, vis);
   const icon = (x, y, fn) => { g.save(); g.translate(x, y); g.scale(es, es); fn(); g.restore(); };
+  const fullArmies = SETTINGS.graphics === 'high' && z >= ARMY_Z;   // every soldier, not a flag
   // paths of selected entity & visible enemy raids
   const selE = selectedEntity();
   const pathLine = (e, color, dash) => {
@@ -370,7 +420,8 @@ function drawWorld(g, t, dt) {
     if (!isSeen(a.at)) continue;
     if (a.status === 'fighting') continue;
     const [x, y] = entPos(a), k = S.kingdoms[a.kid];
-    icon(x, y, () => drawBanner(g, 0, 0, k.color, a.kind === 'raid' ? '⚔' : a.kind === 'guard' ? '🛡' : '', armyHousing(a.units), t, false, a.kind === 'raid' || hostileToPlayer(k)));
+    const top = fullArmies && !isWater(a.at) ? drawArmyOnMap(g, x, y, a.units, k.color, t, a.path.length > 0, a.path.length && WG.cx[a.path[0]] < x ? -1 : 1) : 0;
+    icon(x, y - top, () => drawBanner(g, 0, 0, k.color, a.kind === 'raid' ? '⚔' : a.kind === 'guard' ? '🛡' : '', armyHousing(a.units), t, false, a.kind === 'raid' || hostileToPlayer(k)));
   }
   for (const f of S.aiFleets) {
     if (!isSeen(f.at)) continue;
@@ -398,9 +449,9 @@ function drawWorld(g, t, dt) {
   for (const d of S.divisions) {
     if (d.status === 'fighting') continue;
     const [dx0, dy0] = entPos(d);
-    const off = 0;
     const water = isWater(d.at);
-    icon(dx0 + off, dy0, () => {
+    const top = fullArmies && !water ? drawArmyOnMap(g, dx0, dy0, d.units, d.color, t, d.path.length > 0, d.path.length && WG.cx[d.path[0]] < dx0 ? -1 : 1) : 0;
+    icon(dx0, dy0 - top, () => {
       if (water) drawShip(g, 0, 0, 'cog', d.color, 1, t, false, false, 0.8);
       drawBanner(g, 0, water ? -10 : 0, d.color, '', armyHousing(d.units), t, d === selE, false);
     });
@@ -439,26 +490,26 @@ function drawMinimap() {
   if (!miniCache || (key !== miniKey && performance.now() - (drawMinimap.at || 0) > 1500)) {
     drawMinimap.at = performance.now();
     miniKey = key;
+    // Built from the images the map already keeps — terrain atlas, realm colours,
+    // fog mask — so it costs three blits instead of a sweep of every hex.
     miniCache = document.createElement('canvas'); miniCache.width = W * DPR; miniCache.height = H * DPR;
-    const m = miniCache.getContext('2d'); m.scale(DPR * sc, DPR * sc);
-    m.fillStyle = DEPTH_COLORS[4]; m.fillRect(0, 0, WG.pw, WG.ph);
-    for (let i = 0; i < WG.N; i++) {
-      const tt = S.world.terrain[i], o = S.world.owner[i];
-      if (!S.world.seen[i]) m.fillStyle = '#0c0f15';
-      else if (o !== -1) m.fillStyle = o === -2 ? '#f2c14e' : S.kingdoms[o].color;
-      else m.fillStyle = tt === T.WATER ? DEPTH_COLORS[Math.min(WDEPTH[i], 7) - 1] : TERRAIN[tt].color;
-      m.fillRect(WG.cx[i] - W_HEX, WG.cy[i] - W_HEX, W_HEX * 2, W_HEX * 2);
-    }
+    const m = miniCache.getContext('2d'); m.scale(DPR, DPR);
+    m.imageSmoothingEnabled = true;
+    m.fillStyle = DEPTH_COLORS[4]; m.fillRect(0, 0, W, H);
+    m.drawImage(worldAtlas(), 0, 0, W, H);
+    m.drawImage(ownerBitmap(), 0, 0, W, H);
+    if (fogMask) m.drawImage(fogMask, 0, 0, W, H);
   }
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.drawImage(miniCache, 0, 0);
   g.setTransform(DPR * sc, 0, 0, DPR * sc, 0, 0);
+  const dot = Math.max(25, WG.pw / 110);
   g.fillStyle = '#fff';
-  for (const d of S.divisions) { const [x, y] = entPos(d); g.fillRect(x - 25, y - 25, 50, 50); }
+  for (const d of S.divisions) { const [x, y] = entPos(d); g.fillRect(x - dot, y - dot, dot * 2, dot * 2); }
   g.fillStyle = '#7fd4ff';
-  for (const f of S.fleets) { const [x, y] = entPos(f); g.fillRect(x - 25, y - 25, 50, 50); }
+  for (const f of S.fleets) { const [x, y] = entPos(f); g.fillRect(x - dot, y - dot, dot * 2, dot * 2); }
   g.fillStyle = '#ff5a4f';
-  for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) { const [x, y] = entPos(a); g.fillRect(x - 30, y - 30, 60, 60); }
+  for (const a of S.aiArmies) if (a.kind === 'raid' && isSeen(a.at)) { const [x, y] = entPos(a); g.fillRect(x - dot * 1.2, y - dot * 1.2, dot * 2.4, dot * 2.4); }
   const cam = CAM, [x0, y0] = cam.toWorld(0, 0), [x1, y1] = cam.toWorld(CW, CH);
   g.strokeStyle = '#fff'; g.lineWidth = 2 / sc; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
 }

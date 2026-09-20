@@ -15,7 +15,7 @@ function showModal(html, wide) {
 function closeModal() { el('modal').hidden = true; el('modal-card').innerHTML = ''; }
 
 function showWelcome() {
-  const old = UI.oldSave ? `<p class="card small">⚠️ Your previous save was from Ironcrown v1 and is not compatible with the new hex world. A fresh realm awaits!</p>` : '';
+  const old = UI.oldSave ? `<p class="card small">⚠️ Your previous save was from Ironcrown v${UI.oldSave}, whose world was a tenth of the size of this one — it cannot be carried over. A fresh, far bigger realm awaits!</p>` : '';
   showModal(`<h2 style="font-size:26px">👑 Ironcrown <span class="ver">v${GAME_VERSION}</span></h2>${old}
     <p>Rule a young kingdom in a living world of rival realms, pirates and forgotten ruins.</p>
     <ul class="small muted" style="padding-left:18px">
@@ -166,6 +166,14 @@ const ACTIONS = {
   'focus-entity'() { const e = selectedEntity(); if (e) CAM.centerOn(e.at); },
   'select-entity'(arg) { const [k, id] = arg.split(':'); selectEntity(k, id); },
   'deselect-entity'() { UI.selEntity = null; },
+  'toggle-guard'(id) {
+    const d = S.divisions.find((x) => x.id === id);
+    if (!d) return;
+    d.guard = !d.guard;
+    if (d.guard) { d.guardAt = d.at; toast(`🛡️ ${d.name} guards ${hexName(d.at)} and every hex connected to it`, 'good'); guardDuty(); }
+    else { d.warned = false; if (d.order && d.order.type === 'defend') d.order = null; toast(`${d.name} stands down from guard duty`); }
+    UI.panelDirty = true;
+  },
   claim(arg) { const [i, r] = String(arg).split(':'); claimTile(+i, +r || UI.claimRadius || 1); },
   'scout-here'(i) { const p = dispatchScouts(+(el('scout-count') ? el('scout-count').value : 1), +i); if (p) { UI.selEntity = { kind: 'scout', id: p.id }; toast(`🔭 Scouts heading to ${hexName(+i)} (ETA ${fmtTime(etaOf(p))})`); } },
   'dispatch-scouts'() {
@@ -240,13 +248,13 @@ const ACTIONS = {
   rename() { const v = el('rename-input').value.trim().slice(0, 24); if (v) { S.name = v; save(); toast('Kingdom renamed'); } closeModal(); },
   save() { save(); API.push(true); toast('Game saved', 'good'); },
   export() {
-    const data = btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+    const data = btoa(unescape(encodeURIComponent(serialize(S))));
     showModal(`<h2>Export save</h2><p class="small muted">Copy this code somewhere safe.</p><textarea readonly onclick="this.select()">${data}</textarea><div class="actions">${btn('Close', 'close-modal', '', { cls: 'ghost' })}</div>`);
     navigator.clipboard?.writeText(data).then(() => toast('Save code copied'), () => {});
   },
   import() { showModal(`<h2>Import save</h2><textarea id="import-data"></textarea><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Import', 'import-yes')}</div>`); },
   'import-yes'() {
-    try { const d = JSON.parse(decodeURIComponent(escape(atob(el('import-data').value.trim())))); if (d.version !== SAVE_VERSION) throw 0; S = d; deriveKingdom(); deriveWorld(); fogDirty = true; save(); closeModal(); resetView(); toast('Save imported', 'good'); }
+    try { const d = unpackState(JSON.parse(decodeURIComponent(escape(atob(el('import-data').value.trim()))))); if (d.version !== SAVE_VERSION) throw 0; S = d; deriveKingdom(); deriveWorld(); fogDirty = true; save(); closeModal(); resetView(); toast('Save imported', 'good'); }
     catch { toast('Invalid save code', 'bad'); }
   },
   reset() { showModal(`<h2>Reset everything?</h2><p>Your kingdom will be lost forever.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reset', 'reset-yes', '', { cls: 'red' })}</div>`); },

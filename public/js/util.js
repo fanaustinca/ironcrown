@@ -146,32 +146,41 @@ class HexGrid {
 }
 
 // A* over a HexGrid. cost(i) → step cost of entering hex i (Infinity = blocked).
-function findPath(grid, start, goal, cost, maxExpand = 6000) {
+/* Scratch buffers reused across calls: allocating (and clearing) three arrays of
+   165,000 entries per path request would dominate the cost on the big map, so a
+   generation stamp marks which entries belong to the current search. */
+let pfG = null, pfCame = null, pfMark = null, pfClosed = null, pfGen = 0;
+function findPath(grid, start, goal, cost, maxExpand = 0) {
   if (start === goal) return [];
   if (goal < 0 || !isFinite(cost(goal))) return null;
-  const g = new Float32Array(grid.N).fill(Infinity), came = new Int32Array(grid.N).fill(-1), closed = new Uint8Array(grid.N);
+  if (!maxExpand) maxExpand = Math.min(120000, Math.max(6000, Math.round(grid.N * 0.45)));
+  if (!pfG || pfG.length !== grid.N) { pfG = new Float32Array(grid.N); pfCame = new Int32Array(grid.N); pfMark = new Int32Array(grid.N); pfClosed = new Int32Array(grid.N); pfGen = 0; }
+  const gen = ++pfGen;
+  const g = { get: (i) => (pfMark[i] === gen ? pfG[i] : Infinity), set: (i, v) => { pfMark[i] = gen; pfG[i] = v; } };
+  const came = pfCame, closed = pfClosed;
   const heap = [];
   const push = (f, i) => { heap.push([f, i]); let c = heap.length - 1; while (c > 0) { const p = (c - 1) >> 1; if (heap[p][0] <= heap[c][0]) break; [heap[p], heap[c]] = [heap[c], heap[p]]; c = p; } };
   const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let c = 0; for (;;) { const l = c * 2 + 1, r = l + 1; let m = c; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === c) break; [heap[m], heap[c]] = [heap[c], heap[m]]; c = m; } } return top; };
-  g[start] = 0; push(grid.dist(start, goal), start);
-  let expanded = 0;
+  g.set(start, 0); came[start] = -1; push(grid.dist(start, goal), start);
+  let expanded = 0, found = false;
   while (heap.length) {
     const [, i] = pop();
-    if (i === goal) break;
-    if (closed[i]) continue;
-    closed[i] = 1;
+    if (i === goal) { found = true; break; }
+    if (closed[i] === gen) continue;
+    closed[i] = gen;
     if (++expanded > maxExpand) return null;
+    const gi = g.get(i);
     for (let k = 0; k < 6; k++) {
       const n = grid.nb[i * 6 + k];
-      if (n < 0 || closed[n]) continue;
+      if (n < 0 || closed[n] === gen) continue;
       const c = cost(n);
       if (!isFinite(c)) continue;
-      const ng = g[i] + c;
-      if (ng < g[n]) { g[n] = ng; came[n] = i; push(ng + grid.dist(n, goal) * 0.95, n); }
+      const ng = gi + c;
+      if (ng < g.get(n)) { g.set(n, ng); came[n] = i; push(ng + grid.dist(n, goal) * 0.95, n); }
     }
   }
-  if (came[goal] < 0) return null;
+  if (!found && pfMark[goal] !== gen) return null;
   const path = [];
-  for (let c = goal; c !== start; c = came[c]) path.push(c);
+  for (let c = goal; c !== start; c = came[c]) { path.push(c); if (path.length > grid.N) return null; }
   return path.reverse();
 }

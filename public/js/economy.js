@@ -51,7 +51,7 @@ function claimRing() {
   let n = 0;
   for (const i of WG.within(capHex(), landRadius())) if (S.world.owner[i] === -1 && buildableTerrain(i)) { S.world.owner[i] = -2; n++; }
   reveal(capHex(), landRadius() + 4);
-  if (n) worldVersion++;
+  if (n) ownedChanged();
   return n;
 }
 function kingdomStartSpots() {
@@ -137,7 +137,7 @@ function placeBuilding(type, i) {
   const settle = S.world.owner[i] === -1;
   if (settle) for (const [k, v] of Object.entries(hexClaimCost(i))) cost[k] = (cost[k] || 0) + v;
   if (!pay(cost)) { toast('Not enough resources', 'bad'); return null; }
-  if (settle) { S.world.owner[i] = -2; reveal(i, 3); worldVersion++; }
+  if (settle) { S.world.owner[i] = -2; reveal(i, 3); ownedChanged(); }
   const b = addBuilding(type, i, 0);
   markChunks(i);
   b.build = b.buildTotal = buildTime(type, 1);
@@ -215,12 +215,19 @@ function terrainBoost(b) {
   if (f && f.type === 'cave' && f.mineral === 'gems' && tb.gems) return tb.gems;
   return tb[S.world.terrain[b.hex]] || 1;
 }
+let terrBonus = null, terrBonusVer = -1, terrBonusFeat = 0;
+// Scanning 165,000 hexes per frame is not an option, so this is rebuilt only
+// when your borders move (or a cave is explored, which changes its yield).
 function territoryBonus() {
+  if (terrBonus && terrBonusVer === landVersion && terrBonusFeat === featVersion) return terrBonus;
+  terrBonusVer = landVersion; terrBonusFeat = featVersion;
+  return (terrBonus = computeTerritoryBonus());
+}
+function computeTerritoryBonus() {
   const r = Object.fromEntries(RES.map((k) => [k, 0]));
   if (!S.world) return r;
-  const { owner, terrain, feat } = S.world;
-  for (let i = 0; i < owner.length; i++) {
-    if (owner[i] !== -2) continue;
+  const { terrain, feat } = S.world;
+  for (const i of playerLand()) {
     const b = TERRAIN[terrain[i]].bonus;
     if (b) for (const [k, v] of Object.entries(b)) r[k] += v * HEX_BONUS;
     const f = feat[i];

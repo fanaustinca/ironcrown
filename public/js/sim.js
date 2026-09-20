@@ -245,7 +245,7 @@ function gatherBattle(hex, core, opts) {
         if (f.kind === 'army' && T && !T.won && S.aiArmies.includes(f.ref)) {
           const k = S.kingdoms[f.ref.kid];
           if (f.ref.kind !== 'guard') f.ref.kind = 'home';
-          f.ref.path = findPath(WG, f.ref.at, k.capital, aiLandCost, 25000) || []; f.ref.status = f.ref.path.length ? 'moving' : 'idle';
+          f.ref.path = findPath(WG, f.ref.at, k.capital, aiLandCost) || []; f.ref.status = f.ref.path.length ? 'moving' : 'idle';
         }
       }
       if (r.teams.P && playerIn) {   // every battle your own forces take part in counts, however it started
@@ -296,25 +296,26 @@ function arrive(ent) {
   const f = S.world.feat[o.hex], owner = S.world.owner[o.hex];
   if (isFleet(ent)) return arriveFleet(ent, o, f);
   const d = ent;
-  if (o.type === 'claim') { if (claimTile(o.hex, 2)) reveal(d.at, 3); }
+  if (o.type === 'defend') { /* hold this ground — the detection ring does the rest */ }
+  else if (o.type === 'claim') { if (claimTile(o.hex, 2)) reveal(d.at, 3); }
   else if (o.type === 'explore' && f && f.type === 'ruins' && !f.looted) {
     gatherBattle(o.hex, ['P', 'B'], { kind: 'land', title: `🏛️ ${d.name} explores the ruins`, extra: [bandits(o.hex, f.guard, f.tier)],
       onEnd: (r, lost) => {
         if (r.win) {
-          f.looted = true; S.stats.ruinsExplored++;
+          f.looted = true; featChanged(); S.stats.ruinsExplored++;
           const loot = lootTier(f.tier); gain(loot, true);
           report(`🏛️ ${d.name} cleared the ruins: ${costText(loot)}. ${bonusDrop(f.tier)}`, 'good', lost);
         } else report('🏛️ Your troops were driven off by the bandits guarding the ruins.', 'bad', lost);
       } });
   } else if (o.type === 'explore' && f && f.type === 'cave') {
-    const was = f.explored; f.explored = true;
+    const was = f.explored; f.explored = true; featChanged();
     const loot = { [Object.keys(MINERALS[f.mineral].bonus)[0]]: f.mineral === 'gems' ? 12 : 150 };
     if (!was) { gain(loot, true); log(`${d.name} explored a cave: ${MINERALS[f.mineral].name}! Claim the hex and build a Mine.`, 'good'); toast(`🕳️ Cave holds ${MINERALS[f.mineral].name} (+${costText(loot)})`, 'good'); }
   } else if (o.type === 'capture' && f && f.type === 'fort' && !f.captured) {
     gatherBattle(o.hex, ['P', 'B'], { kind: 'land', title: `🏯 ${d.name} storms the abandoned fort`, extra: [bandits(o.hex, f.guard * 0.7, f.tier + 1, 2)],
       onEnd: (r, lost) => {
         if (r.win) {
-          f.captured = true; S.world.owner[o.hex] = -2; worldVersion++; reveal(o.hex, 3);
+          f.captured = true; featChanged(); S.world.owner[o.hex] = -2; ownedChanged(); reveal(o.hex, 3);
           report(`🏯 ${d.name} captured the fort! It is now your land.`, 'good', lost);
         } else report("🏯 The fort's defenders held.", 'bad', lost);
       } });
@@ -377,7 +378,7 @@ function skirmish(d, k, hex) {
         const taken = [hex].concat(WG.neighbors(hex)).filter((j) => S.world.owner[j] === k.id && j !== k.capital);
         const room = playerTiles() + taken.length <= territoryLimit();
         for (const j of taken) S.world.owner[j] = room ? -2 : -1;
-        worldVersion++;
+        ownedChanged();
         report(`🏳️ ${room ? 'Conquered' : 'Razed'} ${taken.length} hexes of ${k.name}.`, 'good', lost);
       } else { report(`🏳️ Repelled by ${k.name}.`, 'bad', lost); }
     } });
@@ -385,7 +386,7 @@ function skirmish(d, k, hex) {
 
 function arriveFleet(fl, o, f) {
   if (o.type === 'salvage' && f && f.type === 'wreck' && !f.salvaged) {
-    f.salvaged = true; S.stats.wrecksSalvaged++;
+    f.salvaged = true; featChanged(); S.stats.wrecksSalvaged++;
     const loot = lootTier(f.tier, 0.8); gain(loot, true);
     report(`⚓ ${fl.name} salvaged the wreck: ${costText(loot)}. ${bonusDrop(f.tier)}`, 'good');
   } else if (o.type === 'cove' && f && f.type === 'cove' && !f.destroyed) {
@@ -393,7 +394,7 @@ function arriveFleet(fl, o, f) {
     const cove = { team: 'X', kind: 'cove', group: { key: 'cove', name: 'Pirate cove', units: fleetFromPower(f.power, 3), stats: (t) => enemyShipStats(t, 3) }, towers: coveGuns };
     gatherBattle(fl.at, ['P', 'X'], { kind: 'naval', title: `🏴‍☠️ ${fl.name} attacks the pirate cove`, extra: [cove], holder: 'X',
       onEnd: (r, lost) => {
-        if (r.win) { f.destroyed = true; const loot = lootTier(3, 1.6); gain(loot, true); report(`🏴‍☠️ The pirate cove burns! Treasure: ${costText(loot)}. ${bonusDrop(3)}`, 'good', lost); }
+        if (r.win) { f.destroyed = true; featChanged(); const loot = lootTier(3, 1.6); gain(loot, true); report(`🏴‍☠️ The pirate cove burns! Treasure: ${costText(loot)}. ${bonusDrop(3)}`, 'good', lost); }
         else { report('🏴‍☠️ The pirates drove your fleet off.', 'bad', lost); }
       } });
   } else if (o.type === 'blockade') {
@@ -454,9 +455,11 @@ function aiTurn(offline) {
     if (action === 'expand') {
       const limit = (6 + 4 * k.hall) * 7;
       if (kingdomTiles(k.id) < limit) {
+        // only the kingdom's own neighbourhood is scanned, never the whole map
         const cand = [];
         const { owner } = S.world;
-        for (let i = 0; i < owner.length; i++) if (owner[i] === k.id) for (const n of WG.neighbors(i)) if (owner[n] === -1 && isPassable(n) && !(S.world.feat[n] && ['fort', 'ruins'].includes(S.world.feat[n].type))) cand.push(n);
+        const reach = 8 + Math.ceil(Math.sqrt(kingdomTiles(k.id) + 1)) * 2;
+        for (const i of WG.within(k.capital, reach)) if (owner[i] === k.id) for (const n of WG.neighbors(i)) if (owner[n] === -1 && isPassable(n) && !(S.world.feat[n] && ['fort', 'ruins'].includes(S.world.feat[n].type))) cand.push(n);
         if (cand.length) {
           cand.sort((a, b) => WG.dist(a, k.capital) - WG.dist(b, k.capital));
           const c0 = cand[Math.floor(Math.random() * Math.min(6, cand.length))];
@@ -484,7 +487,7 @@ function aiTurn(offline) {
     for (const gd of guards) if (!gd.path.length && gd.status !== 'fighting' && Math.random() < 0.25) {
       const own = WG.within(k.capital, 3 + k.hall * 2).filter((i) => S.world.owner[i] === k.id && isPassable(i));
       const tgt = pick(own.length ? own : [k.capital]);
-      gd.path = findPath(WG, gd.at, tgt, aiLandCost, 6000) || []; gd.status = gd.path.length ? 'moving' : 'idle';
+      gd.path = findPath(WG, gd.at, tgt, aiLandCost, 20000) || []; gd.status = gd.path.length ? 'moving' : 'idle';
     }
     if (k.coastal && k.navy > 50 && S.aiFleets.filter((f) => f.owner === k.id).length < 1 + Math.floor(k.hall / 3) && Math.random() < 0.4) spawnAiFleet(k, true);
   }
@@ -501,7 +504,7 @@ function aiTurn(offline) {
   UI.panelDirty = true;
 }
 function spawnAiArmy(k, targetHex, kind, power) {
-  const path = findPath(WG, k.capital, targetHex, aiLandCost, 25000);
+  const path = findPath(WG, k.capital, targetHex, aiLandCost);
   if (!path || !path.length) return null;
   power = Math.max(60, power);
   k.power = Math.max(40, k.power - power);
@@ -572,7 +575,7 @@ function stepAiFleets(dt) {
       }
       if (f.life <= 0) goal = f.home;
       if (goal < 0) goal = pick(WG.within(f.home, f.patrol ? 38 : 20).filter((i) => OCEAN[i]));
-      f.path = findPath(WG, f.at, goal, fleetCost, 12000) || [];
+      f.path = findPath(WG, f.at, goal, fleetCost, 30000) || [];
     }
     advance(f, dt, Math.min(...SHIP_TYPES.filter((t) => f.ships[t] > 0).map((t) => SHIPS[t].speed), 1.6) * 0.8, fleetCost, HEX_TIME_SEA);
     if (f.owner === 'pirate' && f.at === S.world.harbor) piratesAtHarbor(f);
@@ -597,23 +600,28 @@ function piratesAtHarbor(p) {
    Raiders look for your weakest land: undefended hexes (no division stationed,
    no watchtower/fortress) close to them are prime targets; the capital is
    attacked less often. Station divisions and build forts to protect land. */
-const reachCache = new Map();
-function canReachCapital(k) {
-  const key = k.id + ':' + S.world.capital;
-  if (!reachCache.has(key)) reachCache.set(key, !!findPath(WG, k.capital, S.world.capital, aiLandCost, 25000));
-  return reachCache.get(key);
+// Which land an army can walk to from your capital: one flood fill for the whole
+// map, instead of a long path search per kingdom.
+let mainland = null, mainlandSeed = null;
+function mainlandSet() {
+  if (mainland && mainlandSeed === S.seed) return mainland;
+  mainlandSeed = S.seed;
+  const r = new Uint8Array(WG.N), q = [S.world.capital];
+  r[S.world.capital] = 1;
+  for (let h = 0; h < q.length; h++) for (const n of WG.neighbors(q[h])) if (!r[n] && isFinite(aiLandCost(n))) { r[n] = 1; q.push(n); }
+  return (mainland = r);
 }
+function canReachCapital(k) { return !!mainlandSet()[k.capital]; }
 function raidCandidates() {
   return S.kingdoms.filter((k) => !(S.allianceId && k.allianceId === S.allianceId) && k.treaty <= 0 && (k.atWar || k.relation < 0 || k.personality === 'aggressive'));
 }
 function scheduleRaid() { S.raidTimer = rand(280, 500) / (1 + 0.08 * hallLevel()) * (S.kingdoms.some((k) => k.atWar) ? 0.6 : 1); }
 function raidTargets(k) {
   const out = {};
-  const { owner } = S.world;
-  for (let i = 0; i < owner.length; i++) {
-    if (owner[i] !== -2) continue;
+  const reach = Math.round(80 * MAP_SCALE);
+  for (const i of playerLand()) {
     const d = WG.dist(k.capital, i);
-    if (d > 80) continue;
+    if (d > reach) continue;
     const b = buildingAt(i);
     if (!b && hash2(i, 17) > 0.15) continue;               // mostly aim at buildings — the loot
     const def = hexDefense(i);
@@ -669,7 +677,7 @@ function resolveRaid(a, offline) {
       const adj = WG.neighbors(hex).some((n) => S.world.owner[n] === k.id);
       const b = buildingAt(hex);
       if (b && b.type !== 'hall') { S.buildings = S.buildings.filter((x) => x !== b); }
-      S.world.owner[hex] = adj ? k.id : -1; worldVersion++;
+      S.world.owner[hex] = adj ? k.id : -1; ownedChanged();
       lostHex = (b && b.type !== 'hall' ? ` and destroyed your ${BUILDINGS[b.type].name}` : '') + (adj ? `, annexing ${hexName(hex)}` : ` at ${hexName(hex)}`);
     }
     S.stats.raidsLost++;
@@ -728,6 +736,51 @@ const DIPLO = {
   },
 };
 
+/* ---------- guard duty ----------
+   A division set to guard answers for the block of land it stands on. Whenever a
+   hostile army sets foot on — or marches at — any hex connected to it, the
+   division marches to meet it, then returns to its post once the land is clear. */
+const GUARD_TICK = 3;
+function guardThreats() {
+  const out = [];
+  for (const a of S.aiArmies) {
+    if (a.kind === 'home' || a.status === 'fighting' || !armyHousing(a.units)) continue;
+    const k = S.kingdoms[a.kid];
+    if (!(a.kind === 'raid' || teamsHostile(teamOfKingdom(k), 'P'))) continue;
+    const hex = a.kind === 'raid' && a.targetHex != null ? a.targetHex : a.at;
+    const comp = componentNear(hex, 2);
+    if (comp < 0) continue;
+    out.push({ hex, comp, at: a.at, id: a.id, power: armyHousing(a.units), name: k.name });
+  }
+  return out;
+}
+function guardDuty(offline) {
+  const guards = S.divisions.filter((d) => d.guard && d.status !== 'fighting' && armyHousing(d.units) > 0);
+  if (!guards.length) return;
+  const threats = guardThreats();
+  const taken = new Set();
+  for (const d of guards) if (d.guardAt == null || S.world.owner[d.guardAt] !== -2) d.guardAt = d.at;
+  // biggest incursions first; each one is answered by the nearest guard that can reach it
+  for (const t of threats.sort((a, b) => b.power - a.power)) {
+    const free = guards.filter((d) => !taken.has(d) && componentNear(d.guardAt, 3) === t.comp);
+    if (!free.length) continue;
+    const d = free.sort((a, b) => WG.dist(a.at, t.hex) - WG.dist(b.at, t.hex))[0];
+    taken.add(d);
+    if (d.order && d.order.type === 'defend' && d.order.hex === t.hex) continue;
+    if (d.at === t.hex && !d.path.length) { d.order = { type: 'defend', hex: t.hex }; continue; }
+    if (giveOrder(d, 'defend', t.hex) && !offline && !d.warned) {
+      d.warned = true;
+      log(`🛡️ ${d.name} is marching to defend ${hexName(t.hex)} from ${t.name}.`, 'bad');
+    }
+  }
+  for (const d of guards) {                    // no call to answer — go back on post
+    if (taken.has(d)) continue;
+    d.warned = false;
+    if (d.order && d.order.type === 'defend') d.order = null;
+    if (!d.path.length && d.at !== d.guardAt && d.status !== 'fighting') giveOrder(d, 'move', d.guardAt);
+  }
+}
+
 /* ---------- encounters: armies scout around themselves and engage what they find ----------
    Every army — yours and theirs — watches a ring of hexes around it. March a hostile
    force into that ring and the two sides go at each other without being told to.
@@ -775,7 +828,7 @@ function checkEncounters(offline) {
 /* ---------- the master step ---------- */
 function onPlayerEnter(ent) {
   reveal(ent.at, (isFleet(ent) ? 5 : ent.units.scout > 0 ? 5 : 3) + 2 * visionBonus());
-  if (!isFleet(ent)) { const f = S.world.feat[ent.at]; if (f && f.type === 'cave' && !f.explored && ent.units.scout > 0) f.explored = true; }
+  if (!isFleet(ent)) { const f = S.world.feat[ent.at]; if (f && f.type === 'cave' && !f.explored && ent.units.scout > 0) { f.explored = true; featChanged(); } }
   const o = ent.order;
   if (o && ['intercept', 'hunt', 'attack-army'].includes(o.type)) {
     const tgt = (o.type === 'hunt' ? S.aiFleets : S.aiArmies).find((x) => x.id === o.target);
@@ -839,6 +892,8 @@ function step(dt, offline = false) {
   stepAiArmies(dt, offline);
   stepAiFleets(dt);
   checkEncounters(offline);
+  S.guardTimer = (S.guardTimer || 0) - dt;
+  if (S.guardTimer <= 0) { S.guardTimer = GUARD_TICK; guardDuty(offline); }
 
   S.aiTimer -= dt;
   while (S.aiTimer <= 0) { aiTurn(offline); S.aiTimer += AI_TICK; }

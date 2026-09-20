@@ -8,17 +8,23 @@ const allianceOf = (id) => S.alliances.find((a) => a.id === id);
 const memberName = (m) => (m === 'P' ? S.name + ' (you)' : S.kingdoms[m].name);
 const memberColor = (m) => (m === 'P' ? '#f2c14e' : S.kingdoms[m].color);
 
+const ALLIANCE_NAMES = ['The Iron Pact', 'Sunspear Accord', 'Order of the Silver Rose', 'The Tidebound', 'League of the Nine Hearths',
+  'Covenant of Ash', 'The Verdant Concord', 'Hammer of the North', 'The Gilded Compact', 'Wardens of the Pale'];
+/* Roughly half the realms band together. On a world of thirty kingdoms that is
+   several rival blocs rather than the three hand-written ones of the small map. */
 function createAlliances() {
-  const defs = [
-    { name: 'The Iron Pact', emblem: '🐺', color: '#e5534b', members: [0, 2], open: false, minHall: 2, level: 2 },
-    { name: 'Sunspear Accord', emblem: '🦅', color: '#f2a33a', members: [3], open: true, minHall: 1, level: 1 },
-    { name: 'Order of the Silver Rose', emblem: '⚜️', color: '#4ea1f2', members: [4, 5], open: true, minHall: 2, level: 3 },
-  ];
-  S.alliances = defs.filter((d) => d.members.every((m) => S.kingdoms[m])).map((d, i) => {
-    const a = { id: 'a' + i, ...d, leader: d.members[0], xp: 0, chat: [] };
-    a.members.forEach((m) => { S.kingdoms[m].allianceId = a.id; });
-    return a;
-  });
+  const n = S.kingdoms.length;
+  const count = clamp(Math.round(n / 5), 1, ALLIANCE_NAMES.length);
+  const pool = S.kingdoms.map((k) => k.id).sort(() => Math.random() - 0.5).slice(0, Math.round(n * 0.55));
+  S.alliances = [];
+  for (let i = 0; i < count && pool.length; i++) {
+    const size = Math.max(1, Math.min(pool.length, 1 + Math.floor(Math.random() * 4)));
+    const members = pool.splice(0, size);
+    const a = { id: 'a' + i, name: ALLIANCE_NAMES[i], emblem: ALLIANCE_EMBLEMS[i % ALLIANCE_EMBLEMS.length], color: ALLIANCE_COLORS[i % ALLIANCE_COLORS.length],
+      members, open: Math.random() < 0.6, minHall: 1 + (i % 3), level: 1 + (i % 4), leader: members[0], xp: 0, chat: [] };
+    members.forEach((m) => { S.kingdoms[m].allianceId = a.id; });
+    S.alliances.push(a);
+  }
 }
 function joinAlliance(id) {
   const a = allianceOf(id);

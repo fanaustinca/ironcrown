@@ -168,7 +168,10 @@ await test('build a Farm by clicking the build menu and a hex', async () => {
 });
 
 await test('clear trees/rocks from a hex', async () => {
-  const hex = await G(() => { const s = window.ironcrown.state; return window.ironcrown.debug.WG.within(s.world.capital, 4).find((i) => inLand(i) && obstacleAt(i) && !buildingAt(i)); });
+  const hex = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    return playerLand().filter((i) => inLand(i) && obstacleAt(i) && !buildingAt(i)).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
+  });
   assert(hex !== undefined, 'an obstacle exists on the land');
   await clickHex('kingdom', hex);
   await page.click('[data-action="clear-obstacle"]');
@@ -378,8 +381,12 @@ await test('port trains seamen, shipyard builds crewed ships, form a fleet and s
 
 await test('fleet salvages a shipwreck', async () => {
   await G(() => cheats.reveal());
-  const wreck = await G(() => Object.keys(window.ironcrown.state.world.feat).map(Number).find((i) => window.ironcrown.state.world.feat[i].type === 'wreck'));
   const f = (await state()).fleets[0];
+  const wreck = await G((at) => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    return Object.keys(s.world.feat).map(Number).filter((i) => s.world.feat[i].type === 'wreck' && !s.world.feat[i].salvaged)
+      .sort((a, b) => W.dist(a, at) - W.dist(b, at)).find((i) => findPath(W, at, i, fleetCost));
+  }, f.at);
   const ok = await G(([id, w]) => { const f = window.ironcrown.state.fleets.find((x) => x.id === id); return window.ironcrown.api.giveOrder(f, 'salvage', w); }, [f.id, wreck]);
   assert(ok, 'route to wreck');
   await ff(400);
@@ -421,7 +428,7 @@ await test('battle is fought on the map with formations and stances', async () =
   await page.waitForTimeout(1500);
   await shot('09-battle-on-map');
   const bid = await G(() => window.ironcrown.Battles.focus);
-  await page.click('[data-action="b-resolve"]');
+  await page.click('[data-action="b-resolve"]', { force: true });   // the HUD ticks every second
   const s = await state();
   assert(s.stats.battlesWon + s.stats.battlesLost >= 1, 'battle recorded');
   await page.waitForTimeout(3500);
@@ -623,6 +630,127 @@ await test('battles use the real towers standing on the map, and towers duel tow
   assert(r.hasCannon && r.hasArcher, 'a cannon fights as a cannon and an archer tower as an archer tower');
   assert(r.onRealHexes && r.placed, 'towers stand on their own hexes, not on a made-up back line');
   assert(r.damagedEnemyTowers, 'towers opened fire on the enemy towers');
+});
+
+await test('the world is ten times bigger and full of kingdoms', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    const caps = s.kingdoms.map((k) => k.capital);
+    let far = 0;
+    for (const a of caps) for (const b of caps) far = Math.max(far, W.dist(a, b));
+    return { N: W.N, W: W.W, H: W.H, kingdoms: s.kingdoms.length, alliances: s.alliances.length,
+      spread: far, land: s.world.terrain.reduce((a, t) => a + (t !== 0 ? 1 : 0), 0),
+      feats: Object.keys(s.world.feat).length, packed: serialize(s).length, plain: JSON.stringify(s).length };
+  });
+  assert(r.N >= 150000, `about ten times the old 16,500 hexes (${r.N})`);
+  assert(r.W > 400 && r.H > 300, `grid grew in both directions (${r.W}x${r.H})`);
+  assert(r.kingdoms >= 20, `a lot more kingdoms (${r.kingdoms})`);
+  assert(r.alliances >= 3, `blocs formed among them (${r.alliances})`);
+  assert(r.spread > 200, `capitals are spread across the whole world (${r.spread} hexes apart)`);
+  assert(r.land > 60000 && r.feats > 300, `land and points of interest scaled with it (${r.land} land, ${r.feats} features)`);
+  assert(r.packed < 600000 && r.packed < r.plain / 3, `the save stays small enough to store (${r.packed} vs ${r.plain} bytes)`);
+});
+
+await test('base defenses hit and endure more than ten times harder', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state;
+    const before = { tower: { hp: 300, atk: 20 }, cannon: { hp: 400, atk: 62 }, fortress: { hp: 750, atk: 26 }, spire: { hp: 600, atk: 80 } };
+    const ratio = Math.min(...Object.keys(before).map((k) => Math.min(TOWER_STATS[k].hp / before[k].hp, TOWER_STATS[k].atk / before[k].atk)));
+    // the same raiding party, thrown at the old stats and at the new ones
+    const fight = () => {
+      const hex = s.world.capital;
+      const bt = Battles.create({ kind: 'land', hex, title: 'siege test',
+        teams: [{ id: 'P', name: 'You', color: '#f2c14e', player: true, groups: [], towers: [{ type: 'tower', level: 1, hex }] },
+                { id: 'K:99', name: 'Raiders', color: '#e5534b', groups: [{ key: 'r', name: 'Raiders', units: { swordsman: 12 }, stats: (u) => ({ atk: UNITS[u].atk, hp: UNITS[u].hp, speed: UNITS[u].speed, range: UNITS[u].range }) }] }],
+        hostile: (a, b) => a !== b });
+      for (let i = 0; i < 4000 && !bt.done; i++) Battles.tick(bt, 1 / 30);
+      return { held: !bt.towers[0].dead, killed: bt.units.filter((u) => u.dead).length };
+    };
+    const now = fight();
+    const keep = { ...TOWER_STATS.tower };
+    TOWER_STATS.tower.hp = before.tower.hp; TOWER_STATS.tower.atk = before.tower.atk;
+    const old = fight();
+    Object.assign(TOWER_STATS.tower, keep);
+    return { ratio, now, old, defRating: BUILDINGS.tower.def, siege: UNITS.catapult.vs.tower };
+  });
+  assert(r.ratio >= 10, `every fortification is at least ten times stronger (lowest ${r.ratio.toFixed(1)}x)`);
+  assert(r.defRating >= 450, `the defense rating followed (${r.defRating})`);
+  assert(!r.old.held, 'a dozen raiders used to overrun a lone archer tower');
+  assert(r.now.held, 'now the tower holds the ground');
+  assert(r.now.killed >= r.old.killed + 6, `and it cuts down ${r.now.killed} of them where it used to manage ${r.old.killed}`);
+  assert(r.siege >= 8, 'catapults are still the answer to stone');
+});
+
+await test('a division on guard marches to defend land connected to its post', async () => {
+  await G(() => { window.ironcrown.SETTINGS.battleMode = 'auto'; cheats.army(60); });
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    s.aiArmies = []; s.divisions.forEach((d) => { d.guard = false; d.path = []; d.cooldown = 0; d.status = 'idle'; });
+    const d = s.divisions[0];
+    const mine = playerLand();
+    const post = mine.find((i) => isPassable(i) && W.dist(i, s.world.capital) >= 2) ?? s.world.capital;
+    d.at = post; d.path = []; d.order = null; d.status = 'idle';
+    // a hex of the same connected realm, well outside the division's detection ring
+    const comp = territoryComponents();
+    const far = mine.filter((i) => comp[i] === comp[post] && W.dist(i, post) >= DETECT_R_IDLE + 3 && isPassable(i))
+      .sort((a, b) => W.dist(a, post) - W.dist(b, post))[0];
+    if (far == null) return { skip: true };
+    const k = s.kingdoms.find((x) => canReachCapital(x)) || s.kingdoms[0];
+    k.atWar = true; k.relation = -90;
+    // off guard duty it ignores the raid entirely
+    s.aiArmies = [{ id: 'invader', kid: k.id, kind: 'raid', units: { swordsman: 14, archer: 4, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 }, hall: 1, at: far, targetHex: far, path: [], prog: 0, status: 'idle', cooldown: 0 }];
+    guardDuty(true);
+    const ignored = !d.order || d.order.type !== 'defend';
+    d.guard = true; d.guardAt = post;
+    guardDuty(true);
+    const answered = !!d.order && d.order.type === 'defend' && d.order.hex === far;
+    const marching = d.path.length > 0 || d.at === far;
+    // the invader leaves; the guard goes back to its post
+    d.at = far; d.path = []; d.status = 'idle';
+    s.aiArmies = [];
+    guardDuty(true);
+    const returning = (d.path.length > 0 && d.path[d.path.length - 1] === post) || d.at === post;
+    const gap = W.dist(post, far);
+    s.kingdoms.forEach((x) => { x.atWar = false; });
+    d.guard = false; d.at = s.world.capital; d.path = []; d.order = null;
+    return { skip: false, ignored, answered, marching, returning, gap, reach: DETECT_R_IDLE };
+  });
+  if (r.skip) return;
+  assert(r.gap > r.reach, `the raid was outside the division's own detection ring (${r.gap} > ${r.reach} hexes)`);
+  assert(r.ignored, 'a division not on guard stays where it is');
+  assert(r.answered && r.marching, 'a guarding division marches on an invader anywhere in its connected land');
+  assert(r.returning, 'and goes back to its post once the land is clear');
+});
+
+await test('zoomed in on High graphics an army is drawn soldier by soldier', async () => {
+  const r = await G(async () => {
+    const s = window.ironcrown.state;
+    const d = s.divisions[0];
+    d.at = s.world.capital; d.path = []; d.status = 'idle';
+    const troops = armyHousing(d.units);
+    const real = window.drawSoldier;
+    let n = 0;
+    window.drawSoldier = (...a) => { n++; return real(...a); };
+    const count = async (graphics, z) => {
+      window.ironcrown.SETTINGS.graphics = graphics;
+      CAM.z = z; CAM.centerOn(d.at);
+      await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+      n = 0;
+      await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+      return n;
+    };
+    const zoomedIn = await count('high', 5);
+    const zoomedOut = await count('high', 1.2);
+    const lowPoly = await count('low', 5);
+    window.drawSoldier = real;
+    window.ironcrown.SETTINGS.graphics = 'high';
+    return { troops, zoomedIn, zoomedOut, lowPoly, armyZ: ARMY_Z };
+  });
+  assert(r.troops > 10, `the division has troops to draw (${r.troops})`);
+  assert(r.zoomedIn >= Math.min(r.troops, 100) / 2, `zoomed in, the whole army is drawn, not a flag (${r.zoomedIn} figures for ${r.troops} troops)`);
+  assert(r.zoomedOut === 0, `zoomed out past ${r.armyZ} it goes back to a banner (${r.zoomedOut})`);
+  assert(r.lowPoly === 0, 'low-poly graphics keep the cheap banner');
+  await shot('07e-army-on-map');
 });
 
 await test('assets are version-stamped so updates never mix old and new files', async () => {
