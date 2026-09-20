@@ -39,6 +39,8 @@ const DEFAULT_SETTINGS = {
   graphics: 'high',       // 'high' (textured) | 'medium' (classic) | 'low' (low-poly)
   resolution: 'balanced', // 'sharp' | 'balanced' | 'performance' (canvas pixel density)
   minimap: true,
+  autoQuality: true,      // back off automatically when frames get slow
+  showFps: false,
 };
 let SETTINGS = { ...DEFAULT_SETTINGS };
 try { Object.assign(SETTINGS, JSON.parse(storage.get(SETTINGS_KEY) || '{}')); } catch { /* defaults */ }
@@ -175,7 +177,7 @@ function carryOverV2(old) {
   const hall = (old.buildings || []).find((b) => b.type === 'hall');
   S.buildings = [];
   addBuilding('hall', S.world.capital, hall ? hall.level : 1);
-  claimRing();
+  claimRing(true);          // the realm you start with
   for (const b of (old.buildings || []).filter((x) => x.type !== 'hall').sort((a, c) => (BUILDINGS[a.type].coastal ? -1 : 0) - (BUILDINGS[c.type].coastal ? -1 : 0))) {
     const spot = WG.within(S.world.capital, landRadius() + 6).filter((i) => !placementError(b.type, i) || (placementError(b.type, i) || '').startsWith('Clear'))
       .filter((i) => S.world.owner[i] === -2 && !buildingAt(i) && (!BUILDINGS[b.type].coastal || isCoastal(i))).sort((x, y) => WG.dist(x, S.world.capital) - WG.dist(y, S.world.capital))[0];

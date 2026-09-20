@@ -23,6 +23,11 @@ function bumpRes(keys) {
   for (const k of keys) { const n = el('res-' + k); if (n) { n.classList.remove('bump'); void n.offsetWidth; n.classList.add('bump'); } }
 }
 function updateHud() {
+  const fc = el('fps-chip');
+  if (fc) {
+    fc.hidden = !SETTINGS.showFps;
+    if (SETTINGS.showFps) { el('fps-label').textContent = GOV.fps + (GOV.level ? ` ·${'▾'.repeat(GOV.level)}` : ''); fc.title = GOV.level ? `Frame rate — quality reduced ${GOV.level} step${GOV.level > 1 ? 's' : ''} to keep up` : 'Frames per second'; }
+  }
   const r = rates(), tb = territoryBonus(), u = upkeep();
   for (const k of RES) {
     const n = el('res-' + k), cap = capOf(k), v = r[k] * 60;
@@ -164,7 +169,7 @@ function objectivesCard() {
 function renderBuildList() {
   const hall = S.buildings.find((b) => b.type === 'hall');
   let h = objectivesCard() + `<h2>Build</h2><p class="muted small">Build on <b>any hex you own</b>. Pick a structure, then click a hex of your land, or click an empty hex of your land and choose from <b>Build here</b>. Terrain matters: mills in forests, mines on hills, farms on plains.</p>
-    <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">Land radius ${landRadius()} · ${playerTiles()} hexes · ${builderCount()} builders</div></div>
+    <div class="card hl"><div class="row"><span class="big-ico">🏰</span><div><b>Main Hall · level ${hall.level}</b><div class="small muted">${playerTiles()} hexes claimed · settles radius ${settleRadius()} · ${builderCount()} builders</div></div>
     <span class="spacer"></span>${btn('Open', 'select', hall.id, { cls: 'sm ghost' })}</div>
     ${hall.build > 0 ? `<div style="margin-top:8px">${progress(1 - hall.build / hall.buildTotal)}<div class="small muted">Upgrading… ${fmtTime(hall.build)}</div></div>` : ''}</div>`;
   for (const cat of ['resource', 'defense', 'military', 'naval', 'civic']) {
@@ -203,7 +208,7 @@ function renderBuildingInfo(b) {
   {
     const err = upgradeError(b);
     h += `<h3>Upgrade to level ${b.level + 1}</h3><div class="card"><div class="row wrap">${costHtml(costFor(b.type, b.level + 1), S.res)}<span class="small muted">⏱ ${fmtTime(buildTime(b.type, b.level + 1))}</span></div>
-      ${b.type === 'hall' ? `<div class="small muted" style="margin-top:6px">Unlocks: ${hallUnlocks(b.level + 1).join(' · ') || 'more of every building'}; claims the land ring ${landRadius()}→${landRadius() + 1}; more storage, territory${(b.level + 1) % 2 ? ' & a builder' : ''}.</div>` : ''}
+      ${b.type === 'hall' ? `<div class="small muted" style="margin-top:6px">Unlocks: ${hallUnlocks(b.level + 1).join(' · ') || 'more of every building'}; a wider settling reach, more storage${(b.level + 1) % 2 ? ' & a builder' : ''}. Land itself is claimed, never granted.</div>` : ''}
       <div style="margin-top:8px">${btn('⬆ Upgrade', 'upgrade', b.id, { disabled: !!err, title: err || '', cls: 'block' })}</div>
       ${err ? `<div class="small muted" style="margin-top:4px">${esc(err)}</div>` : ''}</div>`;
   }

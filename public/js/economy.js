@@ -47,9 +47,12 @@ function clearObstacle(i) {
   return true;
 }
 // Upgrading the Main Hall claims every neutral land hex within its radius.
-function claimRing() {
+/* The Main Hall no longer hands you land — territory is earned by claiming it.
+   Upgrading still lights up the country around your seat, so you can see what
+   there is to settle. `grant` is only used to lay out the starting realm. */
+function claimRing(grant) {
   let n = 0;
-  for (const i of WG.within(capHex(), landRadius())) if (S.world.owner[i] === -1 && buildableTerrain(i)) { S.world.owner[i] = -2; n++; }
+  if (grant) for (const i of WG.within(capHex(), landRadius())) if (S.world.owner[i] === -1 && buildableTerrain(i)) { S.world.owner[i] = -2; n++; }
   reveal(capHex(), landRadius() + 4);
   if (n) ownedChanged();
   return n;
@@ -181,7 +184,7 @@ function completeBuilding(b) {
   const d = BUILDINGS[b.type];
   log(`${d.name} ${b.level === 1 ? 'constructed' : 'upgraded to level ' + b.level}.`, 'good');
   if (b.type !== 'wall') toast(`${d.icon} ${d.name} ${b.level === 1 ? 'is ready' : '→ level ' + b.level}`, 'good');
-  if (b.type === 'hall') { const n = claimRing(); toast(`Main Hall ${b.level}! +${n} hexes of land and more buildings unlock.`, 'good'); celebrate(); }
+  if (b.type === 'hall') { claimRing(); toast(`Main Hall ${b.level}! More buildings unlock and your settlers reach further — claim the land yourself.`, 'good'); celebrate(); }
   spawnSparkles(b.hex);
   UI.panelDirty = true;
 }

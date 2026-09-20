@@ -39,19 +39,21 @@ function aiCity(k) {
   return c;
 }
 
-function drawCityLayer(g, t, dt, vis) {
-  const z = CAM.z, visSet = new Set(vis), cap = S.world.capital, detail = z * W_HEX >= 5;
+function drawCityLayer(g, t, dt, vis, inView) {
+  const z = CAM.z, cap = S.world.capital, detail = z * W_HEX >= 5;
+  const built = new Set(S.buildings.map((b) => b.hex));
   // plazas
-  const plaza = (c) => { for (const i of [c].concat(WG.neighbors(c))) { if (!visSet.has(i)) continue; g.fillStyle = SETTINGS.graphics === 'high' ? patXform(pattern(g, 'cobble'), 0, 0) : '#b8ab92'; g.beginPath(); WG.hexPath(g, i, 1.02); g.fill(); } };
+  const plaza = (c) => { for (const i of [c].concat(WG.neighbors(c))) { if (!inView(i)) continue; g.fillStyle = SETTINGS.graphics === 'high' ? patXform(pattern(g, 'cobble'), 0, 0) : '#b8ab92'; g.beginPath(); WG.hexPath(g, i, 1.02); g.fill(); } };
   plaza(cap);
   for (const k of S.kingdoms) if (isSeen(k.capital)) plaza(k.capital);
-  // cleared hexes & loose rocks on your land
-  if (detail) for (const i of vis) {
-    if (S.world.owner[i] !== -2) continue;
+  // cleared hexes & loose rocks on your land (walk your own hexes, not the screen)
+  if (detail) for (const i of playerLand()) {
+    if (!inView(i)) continue;
     if (cleared(i) && [T.FOREST, T.HILLS].includes(S.world.terrain[i])) { g.fillStyle = SETTINGS.graphics === 'high' ? patXform(pattern(g, 'grass')) : '#7fae55'; g.globalAlpha = 0.9; g.beginPath(); WG.hexPath(g, i, 0.98); g.fill(); g.globalAlpha = 1; }
+    if (built.has(i)) continue;
     const o = obstacleAt(i);
-    if (o === 'rock' && detail && S.world.terrain[i] !== T.HILLS && !buildingAt(i)) { g.save(); g.translate(WG.cx[i], WG.cy[i]); g.scale(ART, ART); rock(g, 0, 6, 12); rock(g, 10, -2, 7); g.restore(); }
-    else if (o === 'tree' && detail && S.world.terrain[i] !== T.FOREST && !buildingAt(i)) { g.save(); g.translate(WG.cx[i], WG.cy[i]); g.scale(ART, ART); tree(g, -8, 4, 9); tree(g, 7, 9, 8, true); g.restore(); }
+    if (o === 'rock' && S.world.terrain[i] !== T.HILLS) { g.save(); g.translate(WG.cx[i], WG.cy[i]); g.scale(ART, ART); rock(g, 0, 6, 12); rock(g, 10, -2, 7); g.restore(); }
+    else if (o === 'tree' && S.world.terrain[i] !== T.FOREST) { g.save(); g.translate(WG.cx[i], WG.cy[i]); g.scale(ART, ART); tree(g, -8, 4, 9); tree(g, 7, 9, 8, true); g.restore(); }
   }
   // placement / hover / selection
   const h = UI.hover;
@@ -64,8 +66,8 @@ function drawCityLayer(g, t, dt, vis) {
   if (sel) { g.strokeStyle = `rgba(242,193,78,${0.6 + 0.4 * Math.sin(t * 5)})`; g.lineWidth = 3 / z; g.beginPath(); WG.hexPath(g, sel.hex, sel.type === 'hall' ? 1.9 : 0.95); g.stroke(); }
   // buildings (yours + AI cities), depth-sorted; tiny dots when zoomed far out
   const fighting = Battles.list.length ? Battles.towerHexes() : null;   // those are drawn by the battle instead
-  const shown = (b) => visSet.has(b.hex) && !(fighting && fighting.has(b.hex) && DEF_TYPES.includes(b.type));
-  const list = S.buildings.filter((b) => shown(b) || (b.type === 'hall' && vis.length));
+  const shown = (b) => inView(b.hex) && !(fighting && fighting.has(b.hex) && DEF_TYPES.includes(b.type));
+  const list = S.buildings.filter(shown);
   for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) if (shown(b)) list.push(b);
   list.sort((a, b) => WG.cy[a.hex] - WG.cy[b.hex]);
   for (const b of list) {
@@ -76,7 +78,7 @@ function drawCityLayer(g, t, dt, vis) {
   // production popups
   for (const b of S.buildings) {
     const prod = productionOf(b);
-    if (!prod || b.build > 0 || S.res[prod[0]] >= capOf(prod[0]) || !visSet.has(b.hex)) continue;
+    if (!prod || b.build > 0 || S.res[prod[0]] >= capOf(prod[0]) || !inView(b.hex)) continue;
     popTimers[b.id] = (popTimers[b.id] ?? hash2(b.id, 1) * 6) - dt;
     if (popTimers[b.id] <= 0) {
       popTimers[b.id] = 6;

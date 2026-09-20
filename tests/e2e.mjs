@@ -170,7 +170,15 @@ await test('build a Farm by clicking the build menu and a hex', async () => {
 await test('clear trees/rocks from a hex', async () => {
   const hex = await G(() => {
     const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
-    return playerLand().filter((i) => inLand(i) && obstacleAt(i) && !buildingAt(i)).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
+    const mine = playerLand().filter((i) => inLand(i) && obstacleAt(i) && !buildingAt(i)).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
+    if (mine !== undefined) return mine;
+    // nothing overgrown inside the borders yet — settle a wooded hex just outside
+    window.ironcrown.debug.give({ gold: 4000, food: 4000 });
+    const near = W.within(s.world.capital, 10).filter((i) => s.world.owner[i] === -1 && canSettle(i) && !s.world.feat[i]
+      && [3, 4].includes(s.world.terrain[i])).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
+    if (near == null) return undefined;
+    claimTile(near, 1);
+    return playerLand().filter((i) => inLand(i) && obstacleAt(i) && !buildingAt(i))[0];
   });
   assert(hex !== undefined, 'an obstacle exists on the land');
   await clickHex('kingdom', hex);
@@ -178,15 +186,17 @@ await test('clear trees/rocks from a hex', async () => {
   assert((await state()).cleared.includes(hex), 'hex cleared');
 });
 
-await test('the Main Hall upgrades without limit and claims more land', async () => {
+await test('the Main Hall upgrades without limit and never hands you land', async () => {
   const s = await state();
   const hall = s.buildings.find((b) => b.type === 'hall');
-  const land0 = await G(() => playerTiles());
+  const before = await G(() => ({ land: playerTiles(), reach: settleReach(), radius: settleRadius(), unlocks: BUILD_ORDER.filter((t) => limitOf(t) > 0).length }));
   await clickHex('kingdom', hall.hex);
   await page.click('[data-action="upgrade"]');
   await ff(80);
   assert((await G(() => window.ironcrown.debug.hallLevel())) === 2, 'hall level 2');
-  assert((await G(() => playerTiles())) > land0, 'the new level claimed a ring of land');
+  const after = await G(() => ({ land: playerTiles(), reach: settleReach(), radius: settleRadius(), unlocks: BUILD_ORDER.filter((t) => limitOf(t) > 0).length }));
+  assert(after.land === before.land, `the upgrade granted no territory (${before.land} → ${after.land})`);
+  assert(after.unlocks >= before.unlocks && after.radius >= before.radius, 'it unlocks buildings and widens what settlers can take instead');
   const beyond = await G(() => { cheats.hall(7); const b = window.ironcrown.state.buildings.find((x) => x.type === 'hall'); return upgradeError(b); });
   assert(!beyond || beyond === 'Not enough resources' || beyond.includes('builders'), `level 7 can still be upgraded (${beyond})`);
 });
@@ -609,7 +619,7 @@ await test('battles use the real towers standing on the map, and towers duel tow
     const hall = s.buildings.find((b) => b.type === 'hall'); hall.level = Math.max(hall.level, 5);
     const spot = window.ironcrown.debug.freeHex('cannon');
     placeBuilding('cannon', spot); cheats.build();
-    const t2 = window.ironcrown.debug.freeHex('tower');
+    const t2 = W.within(spot, 2).find((i) => i !== spot && !placementError('tower', i));   // next door, so both join the same fight
     placeBuilding('tower', t2); cheats.build();
     const defs = playerTowers(spot);
     // an enemy with towers of its own, so the two sets of stonework can shoot at each other
@@ -657,11 +667,13 @@ await test('base defenses hit and endure more than ten times harder', async () =
     const before = { tower: { hp: 300, atk: 20 }, cannon: { hp: 400, atk: 62 }, fortress: { hp: 750, atk: 26 }, spire: { hp: 600, atk: 80 } };
     const ratio = Math.min(...Object.keys(before).map((k) => Math.min(TOWER_STATS[k].hp / before[k].hp, TOWER_STATS[k].atk / before[k].atk)));
     // the same raiding party, thrown at the old stats and at the new ones
+    const W = window.ironcrown.debug.WG;
+    const hex = s.world.capital;
+    const from = W.neighbors(hex).find((i) => isPassable(i)) ?? hex;   // they attack from the ground next door
     const fight = () => {
-      const hex = s.world.capital;
       const bt = Battles.create({ kind: 'land', hex, title: 'siege test',
         teams: [{ id: 'P', name: 'You', color: '#f2c14e', player: true, groups: [], towers: [{ type: 'tower', level: 1, hex }] },
-                { id: 'K:99', name: 'Raiders', color: '#e5534b', groups: [{ key: 'r', name: 'Raiders', units: { swordsman: 12 }, stats: (u) => ({ atk: UNITS[u].atk, hp: UNITS[u].hp, speed: UNITS[u].speed, range: UNITS[u].range }) }] }],
+                { id: 'K:99', name: 'Raiders', color: '#e5534b', groups: [{ key: 'r', name: 'Raiders', hex: from, units: { swordsman: 12 }, stats: (u) => ({ atk: UNITS[u].atk, hp: UNITS[u].hp, speed: UNITS[u].speed, range: UNITS[u].range }) }] }],
         hostile: (a, b) => a !== b });
       for (let i = 0; i < 4000 && !bt.done; i++) Battles.tick(bt, 1 / 30);
       return { held: !bt.towers[0].dead, killed: bt.units.filter((u) => u.dead).length };
@@ -751,6 +763,117 @@ await test('zoomed in on High graphics an army is drawn soldier by soldier', asy
   assert(r.zoomedOut === 0, `zoomed out past ${r.armyZ} it goes back to a banner (${r.zoomedOut})`);
   assert(r.lowPoly === 0, 'low-poly graphics keep the cheap banner');
   await shot('07e-army-on-map');
+});
+
+await test('the tile cache always covers the screen, and stays inside its memory budget', async () => {
+  const r = await G(async () => {
+    const auto = SETTINGS.autoQuality;
+    SETTINGS.autoQuality = false; GOV.level = 0; resize();
+    const out = [];
+    for (const z of [0.7, 1.4, 2.6, 5]) {
+      CAM.z = z; CAM.centerOn(window.ironcrown.state.world.capital); CAM.clamp();
+      for (let i = 0; i < 180; i++) { GOV.busy = false; drawWorld(ctx, performance.now() / 1000, 1 / 60); }
+      let li = 0; while (li < LODS.length - 1 && CAM.z >= LODS[li].maxZ) li++;
+      const L = LODS[li];
+      const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+      const need = (Math.floor(x1 / L.size) - Math.floor(x0 / L.size) + 1) * (Math.floor(y1 / L.size) - Math.floor(y0 / L.size) + 1);
+      out.push({ z, need, held: chunkCache[li].size });
+    }
+    SETTINGS.autoQuality = auto;
+    return { out, pixels: chunkPixels, budget: CHUNK_PIXEL_BUDGET };
+  });
+  // The old cap was a fixed 40 tiles: a large window needed more than that and
+  // every frame threw away tiles it was about to draw again.
+  for (const v of r.out) assert(v.held >= Math.min(v.need, 24), `zoom ${v.z}: the cache holds the ${v.need} tiles on screen (has ${v.held})`);
+  assert(r.pixels <= r.budget * 1.05, `cached tiles stay within budget (${Math.round(r.pixels / 1e6)}M of ${Math.round(r.budget / 1e6)}M px)`);
+});
+
+await test('the game gives ground on its own when frames get slow', async () => {
+  const r = await G(async () => {
+    const was = { ...SETTINGS };
+    SETTINGS.autoQuality = true;
+    GOV.level = 0; GOV.hold = 0; GOV.ms = 16; resize();
+    const dpr0 = DPR;
+    for (let i = 0; i < 400; i++) { GOV.sample(0.05); GOV.hold = 0; }   // pretend every frame took 50 ms
+    const slow = { level: GOV.level, dpr: DPR, busy: GOV.busy, fps: GOV.fps };
+    for (let i = 0; i < 400; i++) { GOV.sample(1 / 120); GOV.hold = 0; }  // …and then plenty of headroom
+    const fast = { level: GOV.level, dpr: DPR };
+    // A display locked to 60 fps sits at 16.7 ms: it must still count as healthy,
+    // or a machine that is keeping up perfectly could never climb back.
+    GOV.level = 2; GOV.hold = 0; GOV.ms = 16.7;
+    for (let i = 0; i < 200; i++) { GOV.sample(1 / 60); GOV.hold = 0; }
+    const vsync = GOV.level;
+    SETTINGS.autoQuality = false; GOV.sample(0.05);
+    const off = GOV.level;
+    Object.assign(SETTINGS, was); GOV.level = 0; resize();
+    return { dpr0, slow, fast, vsync, off };
+  });
+  assert(r.slow.level >= 2, `it steps the quality down under load (level ${r.slow.level})`);
+  assert(r.slow.dpr < r.dpr0, `and renders fewer pixels (${r.slow.dpr.toFixed(2)} vs ${r.dpr0.toFixed(2)})`);
+  assert(r.slow.busy && r.slow.fps < 30, 'it reports the low frame rate it is reacting to');
+  assert(r.fast.level === 0 && r.fast.dpr >= r.dpr0 - 0.01, 'and climbs back when there is headroom again');
+  assert(r.vsync === 0, 'a steady vsync-locked 60 fps counts as healthy, so it never gets stuck stepped down');
+  assert(r.off === 0, 'turning the setting off returns full quality');
+});
+
+await test('armies fight where they stand, and never in the sea', async () => {
+  await G(() => { window.ironcrown.SETTINGS.battleMode = 'auto'; cheats.army(150); cheats.generals(2); });
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    s.aiArmies = []; s.divisions.forEach((d) => { d.cooldown = 0; d.status = 'idle'; d.path = []; d.guard = false; });
+    const coast = playerLand().find((i) => isPassable(i) && W.neighbors(i).some((n) => isWater(n)) && i !== s.world.capital);
+    if (coast == null) return { skip: true };
+    const d = s.divisions[0];
+    d.at = coast; d.path = []; d.order = null;
+    const k = s.kingdoms.find((x) => canReachCapital(x)) || s.kingdoms[0];
+    k.atWar = true; k.relation = -95;
+    const from = W.neighbors(coast).find((i) => isPassable(i)) ?? coast;
+    s.aiArmies = [{ id: 'shore', kid: k.id, kind: 'war', units: { swordsman: 30, archer: 15, pikeman: 0, horseman: 5, catapult: 0, scout: 0, seaman: 0 }, hall: 2, at: from, path: [], prog: 0, target: coast, status: 'idle', cooldown: 0 }];
+    const bt = Battles.create({ ...{ kind: 'land', hex: coast, title: 'shore' },
+      teams: [{ id: 'P', name: 'You', color: '#f2c14e', player: true, towers: [], groups: [groupOf(d)] },
+              { id: 'K:' + k.id, name: k.name, color: k.color, towers: [], groups: [aiGroup(s.aiArmies[0], 'Raiders')] }],
+      hostile: (a, b) => a !== b });
+    const wet = () => bt.units.filter((u) => !u.dead && !u.escaped && !groundOk(bt, u.x, u.y)).length;
+    const start = wet();
+    // where each side formed up, versus where it actually stands on the map
+    const drift = bt.groups.map((G) => {
+      const sp = bt.teams[G.team].groups.find((x) => x.key === G.key);
+      if (sp == null || sp.hex == null) return 0;
+      const [hx, hy] = [BW / 2 + (W.cx[sp.hex] - W.cx[coast]) / BSC, BH / 2 + (W.cy[sp.hex] - W.cy[coast]) / BSC];
+      return Math.hypot(G.ax - hx, G.ay - hy);
+    });
+    let mid = 0;
+    for (let i = 0; i < 1500; i++) { Battles.tick(bt, 1 / 30); if (i === 400) mid = wet(); }
+    s.kingdoms.forEach((x) => { x.atWar = false; });
+    s.aiArmies = [];
+    return { skip: false, start, mid, end: wet(), units: bt.units.length, drift: Math.max(...drift), hexPx: (W_HEX * SQ3) / BSC };
+  });
+  if (r.skip) return;
+  assert(r.units > 20, `both sides turned up (${r.units} squads)`);
+  assert(r.drift < r.hexPx, `each force formed up on its own hex, not at a made-up spot (off by ${r.drift.toFixed(0)} of ${r.hexPx.toFixed(0)} per hex)`);
+  assert(r.start === 0 && r.mid === 0 && r.end === 0, `nobody was put in the water (${r.start}/${r.mid}/${r.end} afloat)`);
+});
+
+await test('soldiers are drawn much smaller than they were', async () => {
+  const r = await G(() => {
+    const d = window.ironcrown.state.divisions[0];
+    // measure the ink a single figure lays down, at a known scale
+    const c = document.createElement('canvas'); c.width = c.height = 200;
+    const g = c.getContext('2d');
+    const ink = (fn) => {
+      g.clearRect(0, 0, 200, 200);
+      g.save(); g.translate(100, 150); g.scale(4, 4);
+      fn(g, 0, 0, 'swordsman', '#ff0000', 1, 0, false, false);
+      g.restore();
+      const px = g.getImageData(0, 0, 200, 200).data;
+      let n = 0;
+      for (let i = 3; i < px.length; i += 4) if (px[i] > 20) n++;
+      return n;
+    };
+    return { drawn: ink(drawSoldier), ifFullSize: ink(drawSoldierArt), scale: SOLDIER_SCALE, troops: armyHousing(d.units) };
+  });
+  assert(r.scale <= 0.6, `figures are drawn at ${r.scale} of their old size`);
+  assert(r.drawn < r.ifFullSize * 0.45, `which is far less ink on the map (${r.drawn} vs ${r.ifFullSize} pixels)`);
 });
 
 await test('assets are version-stamped so updates never mix old and new files', async () => {

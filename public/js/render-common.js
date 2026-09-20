@@ -40,15 +40,46 @@ class Camera {
 }
 const CAM = new Camera(WG, 0.25, 10);   // one camera for the one map
 
+/* ---- Performance governor ----
+   Machines and windows vary enormously, and a 165,000-hex world can ask for
+   more than a given one will give. This watches the real frame time and quietly
+   gives ground: first it stops building new terrain tiles, then it renders
+   fewer pixels, then it drops the detailed tiles for the flat world image. It
+   climbs back the moment there is headroom. */
+const GOV = {
+  ms: 16.7, level: 0, busy: false, hold: 0, fps: 60,
+  maxLevel: 3,
+  scale() { return [1, 1, 0.78, 0.62][Math.min(this.level, 3)]; },
+  sample(dt) {
+    const ms = Math.min(dt * 1000, 400);
+    this.ms += (ms - this.ms) * 0.08;
+    this.fps = Math.round(1000 / Math.max(1, this.ms));
+    this.busy = this.ms > 24;
+    if (!SETTINGS.autoQuality) { if (this.level) { this.level = 0; resize(); } return; }
+    this.hold -= dt;
+    if (this.hold > 0) return;
+    // Recovery has to sit above a vsync-locked 16.7 ms, or a machine running
+    // perfectly at 60 fps could never climb back out of a step-down.
+    if (this.ms > 26 && this.level < this.maxLevel) { this.level++; this.hold = 2.5; if (this.level >= 2) resize(); }
+    else if (this.ms < 19 && this.level > 0) { this.level--; this.hold = 4; if (this.level <= 1) resize(); }
+  },
+};
 // Render resolution: 'sharp' = full device density, 'balanced' = at most 1.25×, 'performance' = 1×.
-function renderScale() {
+function renderScale(w, h) {
   const dev = window.devicePixelRatio || 1;
-  return SETTINGS.resolution === 'sharp' ? Math.min(dev, 2) : SETTINGS.resolution === 'performance' ? Math.min(dev, 1) : Math.min(dev, 1.25);
+  const base = SETTINGS.resolution === 'sharp' ? Math.min(dev, 2) : SETTINGS.resolution === 'performance' ? Math.min(dev, 1) : Math.min(dev, 1.25);
+  // Every full-screen blit costs a pixel, so Performance also caps how many
+  // there are: on a big or very high-density display it renders smaller and
+  // lets the browser scale the canvas up.
+  const budget = SETTINGS.resolution === 'sharp' ? Infinity : SETTINGS.resolution === 'performance' ? 2.6e6 : 4.4e6;
+  const px = w * h * base * base;
+  const fit = px > budget ? base * Math.sqrt(budget / px) : base;
+  return Math.max(0.5, fit * GOV.scale());
 }
 function resize() {
   const r = cv.getBoundingClientRect();
-  DPR = renderScale();
   CW = Math.max(200, r.width); CH = Math.max(200, r.height);
+  DPR = renderScale(CW, CH);
   cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR);
   CAM.clamp();
 }

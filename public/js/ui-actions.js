@@ -49,7 +49,10 @@ function showSettings() {
     ${chk('particles', 'Particles & effects')}
     <div class="setting"><span>Graphics quality</span>${sel('graphics', [['high', '✨ High — realistic textures'], ['medium', '🎨 Classic'], ['low', '🔷 Low-poly (fastest)']])}</div>
     <div class="setting"><span>Render resolution</span>${sel('resolution', [['sharp', '🔍 Sharp (full screen density)'], ['balanced', '⚖️ Balanced'], ['performance', '⚡ Performance (fastest)']])}</div>
-    <p class="small muted">Lagging? Try ⚡ Performance resolution first — it has the biggest effect on high-DPI / 4K screens.</p>
+    ${chk('autoQuality', 'Adapt automatically when frames get slow (recommended)')}
+    ${chk('showFps', 'Show frame rate')}
+    <div class="row" style="margin-top:6px">${btn('⚡ Make it fast', 'fast-preset', '', { cls: 'sm', title: 'Low-poly, Performance resolution, no minimap or particles' })}<span class="small muted">One click if the map feels heavy.</span></div>
+    <p class="small muted">A world of ${fmt(WG.N)} hexes asks a lot of a browser. ⚡ Performance resolution has the biggest effect on high-DPI and 4K screens; with <b>Adapt automatically</b> on, the game also gives ground on its own rather than pinning your machine.</p>
     <h3>Gameplay</h3>
     <div class="setting"><span>Battles</span>${sel('battleMode', [['watch', '⚔️ Command battles on the map'], ['auto', '⚡ Auto-resolve instantly']])}</div>
     ${chk('focusBattles', 'Move the camera to battles when they start')}
@@ -259,6 +262,12 @@ const ACTIONS = {
   },
   reset() { showModal(`<h2>Reset everything?</h2><p>Your kingdom will be lost forever.</p><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reset', 'reset-yes', '', { cls: 'red' })}</div>`); },
   'reset-yes'() { storage.del(SAVE_KEY); newGame(); fogDirty = true; resetView(); showWelcome(); },
+  'fast-preset'() {
+    Object.assign(SETTINGS, { graphics: 'low', resolution: 'performance', minimap: false, particles: false, showGrid: false, autoQuality: true });
+    saveSettings(); worldVersion++; resize(); UI.lastPanelHtml = '';
+    toast('⚡ Set for speed: low-poly, performance resolution, no minimap', 'good');
+    showSettings();
+  },
   'zoom-in'() { CAM.zoomAt(CW / 2, CH / 2, 1.3); },
   'zoom-out'() { CAM.zoomAt(CW / 2, CH / 2, 0.77); },
   'zoom-home'() { CAM.centerOn(S.world.capital); },

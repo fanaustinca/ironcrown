@@ -15,6 +15,7 @@ function frameInner(now) {
   lastFrame = now;
   if (dt > 1.5 && UI.gameSpeed > 0) { let t = Math.min(dt, OFFLINE_CAP); while (t > 0) { const d = Math.min(2, t); step(d, true); t -= d; } dt = 0; }  // tab was hidden
   dt = Math.min(dt, 0.25);
+  GOV.sample(dt);
   let sim = dt * UI.gameSpeed;
   while (sim > 0) { const d = Math.min(1, sim); step(d); sim -= d; }
   Battles.frame(dt);
@@ -101,7 +102,7 @@ const cheats = {
   gold(n = 1e5) { S.res.gold += n; return done(`+${n} gold`); },
   res(n = 1e5) { for (const k of RES) S.res[k] += k === 'diamonds' ? Math.min(n, 5000) : n; return done('resources added'); },
   max() { for (const k of RES) S.res[k] = Math.max(S.res[k], capOf(k)); return done('storage filled'); },
-  hall(lvl = 10) { S.buildings.find((b) => b.type === 'hall').level = Math.max(1, Math.floor(lvl)); claimRing(); return done(`Main Hall → ${lvl}`); },
+  hall(lvl = 10) { S.buildings.find((b) => b.type === 'hall').level = Math.max(1, Math.floor(lvl)); claimRing(true); return done(`Main Hall → ${lvl}`); },
   build() { S.buildings.filter((b) => b.build > 0).forEach(completeBuilding); return done('construction finished'); },
   research() { S.buildings.filter((b) => b.research).forEach(completeResearch); return done('research finished'); },
   researchAll() { for (const [id, r] of Object.entries(RESEARCH)) S.research[id] = r.max; return done('all technology researched'); },

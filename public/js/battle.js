@@ -55,6 +55,38 @@ function aiFormation(mine, theirs) {
 }
 const rot = (dx, dy, th) => [dx * Math.cos(th) - dy * Math.sin(th), dx * Math.sin(th) + dy * Math.cos(th)];
 
+/* ---- the battlefield IS the map ----
+   Battlefield coordinates map straight onto world pixels around the contested
+   hex, so a force fights from the ground it is standing on and nothing is ever
+   shuffled into position. `groundOk` keeps foot soldiers out of the water and
+   ships out of the fields, at deployment and while they manoeuvre. */
+const toBattle = (cfg, hex) => [BW / 2 + (WG.cx[hex] - WG.cx[cfg.hex]) / BSC, BH / 2 + (WG.cy[hex] - WG.cy[cfg.hex]) / BSC];
+const battleHexAt = (b, x, y) => WG.at(WG.cx[b.cfg.hex] + (x - BW / 2) * BSC, WG.cy[b.cfg.hex] + (y - BH / 2) * BSC);
+function groundOk(b, x, y) {
+  const h = battleHexAt(b, x, y);
+  if (h < 0) return false;
+  return b.naval ? isWater(h) : isPassable(h);
+}
+// The closest spot to (x,y) this side can actually stand on.
+function nearestGround(b, x, y) {
+  if (groundOk(b, x, y)) return [x, y];
+  for (let r = 22; r <= 300; r += 22) for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2 + r * 0.7;
+    const px = clamp(x + Math.cos(a) * r, 26, BW - 26), py = clamp(y + Math.sin(a) * r, 30, BH - 26);
+    if (groundOk(b, px, py)) return [px, py];
+  }
+  return [x, y];
+}
+// Pull a position back towards `ax,ay` until it stands on ground this side can hold.
+function settleOnGround(b, x, y, ax, ay) {
+  if (groundOk(b, x, y)) return [x, y];
+  for (let k = 0.75; k > 0.05; k -= 0.25) {
+    const sx = ax + (x - ax) * k, sy = ay + (y - ay) * k;
+    if (groundOk(b, sx, sy)) return [sx, sy];
+  }
+  return nearestGround(b, x, y);
+}
+
 /* ---- towers ----
    A team's `towers` is a list of the real buildings defending the place. A Fortress
    mans two turrets; anything with a `hex` is placed at that hex's true spot on the
@@ -111,21 +143,29 @@ const Battles = {
     const b = { id: this.nextId++, cfg, naval, t: 0, units: [], towers: [], shots: [], fx: [], groups: [], teams, done: false, result: null, linger: 3 };
     const n = Math.min(4, teams.length), spots = TEAM_SPOTS[Math.max(1, n)] || TEAM_SPOTS[4];
     b.H = teams.map((a, i) => teams.map((c, j) => i !== j && !!cfg.hostile(a.id, c.id)));
-    // Towers stand where their buildings stand on the map; a side that has them forms up among them.
+    // Towers stand where their buildings stand; every other force stands where it
+    // already is. Only a side with no position at all is given a spot.
     for (const T of teams) T.towerPos = towerPlaces(cfg, T.towers);
-    const anchored = [], pool = spots.slice();
-    for (const T of teams) {
-      if (!T.towerPos.length) continue;
-      T.ax = clamp(T.towerPos.reduce((a, p) => a + p.x, 0) / T.towerPos.length, 130, BW - 130);
-      T.ay = clamp(T.towerPos.reduce((a, p) => a + p.y, 0) / T.towerPos.length, 120, BH - 120);
-      anchored.push(T);
+    const byHex = new Map();
+    for (const T of teams) for (const sp of T.groups) {
+      if (sp.hex == null) continue;
+      const list = byHex.get(sp.hex) || byHex.set(sp.hex, []).get(sp.hex);
+      list.push(sp);
     }
-    for (const T of teams) {          // everyone else marches in from the side furthest away
-      if (T.towerPos.length) continue;
-      let bk = 0, bs = -1;
-      pool.forEach(([x, y], k) => { const sc = anchored.length ? Math.min(...anchored.map((o) => dist(x, y, o.ax, o.ay))) : 1e9 - k; if (sc > bs) { bs = sc; bk = k; } });
-      const [x, y] = pool.splice(bk, 1)[0] || [BW / 2, BH / 2];
-      T.ax = x; T.ay = y; anchored.push(T);
+    for (const [hex, list] of byHex) {      // several forces on one hex fan out a little
+      const [cx, cy] = toBattle(cfg, hex);
+      list.forEach((sp, i) => {
+        const a = (i / list.length) * Math.PI * 2, r = list.length > 1 ? 26 : 0;
+        sp.bx = clamp(cx + Math.cos(a) * r, 40, BW - 40); sp.by = clamp(cy + Math.sin(a) * r, 40, BH - 40);
+      });
+    }
+    const pool = spots.slice();
+    for (const T of teams) {
+      const placed = T.groups.filter((sp) => sp.bx !== undefined).map((sp) => [sp.bx, sp.by]).concat(T.towerPos.map((p) => [p.x, p.y]));
+      if (placed.length) { T.ax = placed.reduce((a, p) => a + p[0], 0) / placed.length; T.ay = placed.reduce((a, p) => a + p[1], 0) / placed.length; }
+      else { const [x, y] = pool.shift() || [BW / 2, BH / 2]; [T.ax, T.ay] = nearestGround(b, x, y); }
+      T.ax = clamp(T.ax, 60, BW - 60); T.ay = clamp(T.ay, 60, BH - 60);
+      [T.ax, T.ay] = nearestGround(b, T.ax, T.ay);
     }
     teams.forEach((T, ti) => {        // each side faces the enemies it can see
       let hx = 0, hy = 0, c = 0;
@@ -141,10 +181,12 @@ const Battles = {
       const gsz = Math.max(1, Math.ceil(total / 64));
       T.groups.forEach((sp, gidx) => {
         const off = (gidx - (G - 1) / 2) * spacing;
+        const gx = sp.bx !== undefined ? sp.bx : T.ax + Math.cos(perp) * off;
+        const gy = sp.by !== undefined ? sp.by : T.ay + Math.sin(perp) * off;
         const mine = T.player && !sp.ally;
         const Gr = { gi: b.groups.length, team: ti, key: sp.key, name: sp.name, ref: sp.ref || null, ally: !!sp.ally,
           formation: sp.formation || (mine ? 'line' : aiFormation(sp.units, allFoe)), stance: sp.stance || (T.towerPos.length ? 'hold' : 'advance'), target: sp.target || 'nearest',
-          ax: T.ax + Math.cos(perp) * off, ay: T.ay + Math.sin(perp) * off, face: T.face, start: {} };
+          ax: gx, ay: gy, face: T.face, start: {} };
         const squads = [];
         for (const k of Object.keys(sp.units)) {
           if (!table[k] || !(sp.units[k] > 0) || k === 'scout' || k === 'seaman') continue;
@@ -158,7 +200,11 @@ const Battles = {
           }
         }
         Gr.slots = formationSlots(Gr.formation, squads);
-        for (const q of squads) { const [dx, dy] = rot(...(Gr.slots.get(q) || [0, 0]), Gr.face); q.x = clamp(Gr.ax + dx, 10, BW - 10); q.y = clamp(Gr.ay + dy, 20, BH - 12); }
+        for (const q of squads) {
+          const [dx, dy] = rot(...(Gr.slots.get(q) || [0, 0]), Gr.face);
+          const [sx, sy] = settleOnGround(b, clamp(Gr.ax + dx, 10, BW - 10), clamp(Gr.ay + dy, 20, BH - 12), Gr.ax, Gr.ay);
+          q.x = sx; q.y = sy;
+        }
         b.units.push(...squads);
         b.groups.push(Gr);
       });
@@ -214,7 +260,7 @@ const Battles = {
       const mine = b.units.filter((q) => q.g === G.gi && !q.dead && !q.escaped);
       if (!mine.length) continue;
       const F = FORMATIONS[G.formation], spd = Math.min(...mine.map((q) => q.speed)) * F.speed * 0.85;
-      if (G.stance === 'retreat') { G.ax -= Math.cos(G.face) * spd * 1.15 * dt; G.ay -= Math.sin(G.face) * spd * 1.15 * dt; continue; }
+      if (G.stance === 'retreat') { const rx = G.ax - Math.cos(G.face) * spd * 1.15 * dt, ry = G.ay - Math.sin(G.face) * spd * 1.15 * dt; if (groundOk(b, rx, ry)) { G.ax = rx; G.ay = ry; } continue; }
       if (G.stance !== 'advance') continue;
       const foes = this.foesOf(b, G.team).concat(b.towers.filter((t) => !t.dead && b.H[G.team][t.team]));
       if (!foes.length) continue;
@@ -222,7 +268,12 @@ const Battles = {
       for (const e of foes) { cx += e.x; cy += e.y; nearest = Math.min(nearest, dist(G.ax, G.ay, e.x, e.y)); }
       cx /= foes.length; cy /= foes.length;
       G.face = Math.atan2(cy - G.ay, cx - G.ax);
-      if (nearest > 100) { const d = dist(G.ax, G.ay, cx, cy) || 1; G.ax += ((cx - G.ax) / d) * spd * dt; G.ay += ((cy - G.ay) / d) * spd * dt; }
+      if (nearest > 100) {
+        const d = dist(G.ax, G.ay, cx, cy) || 1, nx = G.ax + ((cx - G.ax) / d) * spd * dt, ny = G.ay + ((cy - G.ay) / d) * spd * dt;
+        if (groundOk(b, nx, ny)) { G.ax = nx; G.ay = ny; }               // never advance into the sea
+        else if (groundOk(b, nx, G.ay)) G.ax = nx;
+        else if (groundOk(b, G.ax, ny)) G.ay = ny;
+      }
     }
     const all = b.units;
     // spatial grid for cheap neighbour (separation) lookups
@@ -274,7 +325,11 @@ const Battles = {
           const od = dist(a.x, a.y, o.x, o.y) || 1;
           if (od < sep) { vx += ((a.x - o.x) / od) * sp * 0.5; vy += ((a.y - o.y) / od) * sp * 0.5; }
         }
-        a.x = clamp(a.x + vx, -60, BW + 60); a.y = clamp(a.y + vy, -40, BH + 40);
+        const nx = clamp(a.x + vx, -60, BW + 60), ny = clamp(a.y + vy, -40, BH + 40);
+        // Soldiers keep their feet on land and ships stay afloat, whatever the order.
+        if (G.stance === 'retreat' || groundOk(b, nx, ny)) { a.x = nx; a.y = ny; }
+        else if (groundOk(b, nx, a.y)) a.x = nx;
+        else if (groundOk(b, a.x, ny)) a.y = ny;
         a.walk += dt * a.speed * 0.25;
       }
       if (a.hit > 0) a.hit -= dt;
@@ -447,7 +502,19 @@ const Battles = {
   },
 };
 
+// Figures are drawn at about half the size they once were: at world scale the
+// old ones dwarfed the hexes they stood on.
+const SOLDIER_SCALE = 0.5;
 function drawSoldier(g, x, y, u, color, face, walk, attacking, flash) {
+  if (SOLDIER_SCALE !== 1) {
+    g.save(); g.translate(x, y); g.scale(SOLDIER_SCALE, SOLDIER_SCALE);
+    drawSoldierArt(g, 0, 0, u, color, face, walk, attacking, flash);
+    g.restore();
+    return;
+  }
+  drawSoldierArt(g, x, y, u, color, face, walk, attacking, flash);
+}
+function drawSoldierArt(g, x, y, u, color, face, walk, attacking, flash) {
   const bob = Math.sin(walk * 6) * 1.2;
   g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.ellipse(x, y + 2, u === 'horseman' || u === 'catapult' ? 11 : 6, 3, 0, 0, 7); g.fill();
   if (u === 'catapult') {

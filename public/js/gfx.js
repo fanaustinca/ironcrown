@@ -202,7 +202,7 @@ function worldShade(i) {
 }
 // Slow drifting cloud shadows (High quality only), in world coordinates.
 function drawCloudShadows(g, grid, t) {
-  if (SETTINGS.graphics !== 'high') return;
+  if (SETTINGS.graphics !== 'high' || GOV.level >= 1) return;
   for (let k = 0; k < 7; k++) {
     const r = grid.size * (6 + hash2(k, 1) * 6);
     const x = ((hash2(k, 2) * grid.pw + t * (8 + k * 1.5)) % (grid.pw + 2 * r)) - r;
@@ -215,7 +215,7 @@ function drawCloudShadows(g, grid, t) {
 // Warm sunlight + vignette in screen space (High quality only).
 let atmoCache = null, atmoKey = '';
 function drawAtmosphere(g) {
-  if (SETTINGS.graphics !== 'high') return;
+  if (SETTINGS.graphics !== 'high' || GOV.level >= 1) return;
   const key = `${CW}x${CH}`;
   if (key !== atmoKey) {   // render the sunlight/vignette once per screen size, not every frame
     atmoKey = key;

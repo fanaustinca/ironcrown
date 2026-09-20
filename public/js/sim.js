@@ -88,12 +88,14 @@ const enemyFleetPower = (ships, hall) => SHIP_TYPES.reduce((s, t) => s + unitPow
 
 /* ---------- battle helpers ---------- */
 // One battle group per division / fleet (plus garrison, allies…).
+// `hex` is where the force actually stands on the map: a battle forms up there,
+// it does not march anybody to a tidy spot first.
 const groupOf = (ent, naval) => ({
-  key: ent.id, name: ent.name, units: { ...(naval ? ent.ships : ent.units) }, ref: ent,
+  key: ent.id, name: ent.name, units: { ...(naval ? ent.ships : ent.units) }, ref: ent, hex: ent.at,
   formation: ent.formation || 'line', stance: ent.stance || 'advance', target: ent.target || 'nearest',
   stats: naval ? (t) => shipStats(t, ent.general, S.boosts) : (u) => unitStats(u, ent.general, S.boosts),
 });
-const plainGroup = (key, name, units, gid, formation = 'line', stance = 'advance') => ({ key, name, units: { ...units }, formation, stance, target: 'nearest', stats: (u) => unitStats(u, gid, S.boosts) });
+const plainGroup = (key, name, units, gid, formation = 'line', stance = 'advance', hex = null) => ({ key, name, units: { ...units }, formation, stance, target: 'nearest', hex, stats: (u) => unitStats(u, gid, S.boosts) });
 function consumeBoosts() { S.boosts = { warhorn: false, salve: false }; }
 function applyCasualties(units, survivors, keys) {
   const lost = {};
@@ -172,15 +174,15 @@ function teamInfo(T) {
 }
 
 /* ---- forces present near a hex ---- */
-const aiGroup = (a, name) => ({ key: a.id, name, units: { ...(a.units || a.ships) }, ref: a, stats: a.ships ? (t) => enemyShipStats(t, a.hall) : (u) => enemyUnitStats(u, a.hall) });
+const aiGroup = (a, name) => ({ key: a.id, name, units: { ...(a.units || a.ships) }, ref: a, hex: a.at, stats: a.ships ? (t) => enemyShipStats(t, a.hall) : (u) => enemyUnitStats(u, a.hall) });
 function landForcesNear(hex, r = 2) {
   const out = [];
   for (const d of S.divisions) if (d.status !== 'fighting' && WG.dist(d.at, hex) <= r && armyHousing(d.units) > 0) out.push({ team: 'P', kind: 'division', ref: d, group: groupOf(d) });
   const cap = S.world.capital;
   if (WG.dist(cap, hex) <= r + 1) {
-    if (COMBAT_UNITS.some((u) => S.army[u] > 0)) out.push({ team: 'P', kind: 'garrison', group: plainGroup('garrison', 'Garrison', S.army, S.castellan, 'line', 'hold') });
+    if (COMBAT_UNITS.some((u) => S.army[u] > 0)) out.push({ team: 'P', kind: 'garrison', group: plainGroup('garrison', 'Garrison', S.army, S.castellan, 'line', 'hold', cap) });
     const help = S.allianceId ? S.kingdoms.filter((x) => x.allianceId === S.allianceId).reduce((s2, x) => s2 + x.power * 0.12, 0) : 0;
-    if (help > 0) out.push({ team: 'P', kind: 'allies', group: plainGroup('allies', 'Allied reinforcements', armyFromPower(help, 2, 'balanced'), null) });
+    if (help > 0) out.push({ team: 'P', kind: 'allies', group: plainGroup('allies', 'Allied reinforcements', armyFromPower(help, 2, 'balanced'), null, 'line', 'advance', cap) });
   }
   const tw = playerTowers(hex);
   if (tw.length) out.push({ team: 'P', kind: 'towers', towers: tw });
@@ -191,7 +193,7 @@ function landForcesNear(hex, r = 2) {
   }
   for (const k of S.kingdoms) {
     if (WG.dist(k.capital, hex) > r + 2 || k.garrisonBusy) continue;
-    out.push({ team: teamOfKingdom(k), kind: 'kgarrison', k, group: { key: 'kg' + k.id, name: `${k.name} garrison`, units: armyFromPower(k.power, k.hall, k.personality), stats: (u) => enemyUnitStats(u, k.hall) } });
+    out.push({ team: teamOfKingdom(k), kind: 'kgarrison', k, group: { key: 'kg' + k.id, name: `${k.name} garrison`, hex: k.capital, units: armyFromPower(k.power, k.hall, k.personality), stats: (u) => enemyUnitStats(u, k.hall) } });
     const kt = aiCity(k).buildings.filter((b) => DEF_TYPES.includes(b.type) && WG.dist(b.hex, hex) <= 3).map((b) => ({ type: b.type, level: b.level, hex: b.hex }));
     if (kt.length) out.push({ team: teamOfKingdom(k), kind: 'ktowers', k, towers: kt });
   }
@@ -200,7 +202,7 @@ function landForcesNear(hex, r = 2) {
 function navalForcesNear(hex, r = 2) {
   const out = [];
   for (const f of S.fleets) if (f.status !== 'fighting' && WG.dist(f.at, hex) <= r && shipCount(f.ships) > 0) out.push({ team: 'P', kind: 'fleet', ref: f, group: groupOf(f, true) });
-  if (WG.dist(S.world.harbor, hex) <= r + 1 && shipCount(S.harbor) > 0) out.push({ team: 'P', kind: 'harbor', group: { key: 'harbor', name: 'Harbour guard', units: { ...S.harbor }, formation: 'line', stance: 'hold', target: 'nearest', stats: (t) => shipStats(t, null, S.boosts) } });
+  if (WG.dist(S.world.harbor, hex) <= r + 1 && shipCount(S.harbor) > 0) out.push({ team: 'P', kind: 'harbor', group: { key: 'harbor', name: 'Harbour guard', hex: S.world.harbor, units: { ...S.harbor }, formation: 'line', stance: 'hold', target: 'nearest', stats: (t) => shipStats(t, null, S.boosts) } });
   for (const e of S.aiFleets) {
     if (e.status === 'fighting' || WG.dist(e.at, hex) > r || !shipCount(e.ships)) continue;
     const pirate = e.owner === 'pirate';
@@ -285,7 +287,7 @@ function settleForces(forces, r) {
 }
 function bandits(hex, power, tier, towers) {
   const walls = Array.from({ length: towers || 0 }, (_, i) => ({ type: i % 2 && tier >= 3 ? 'cannon' : 'tower', level: tier, hex: WG.neighbors(hex)[i * 2 % 6] ?? hex }));
-  return { team: 'B', kind: 'bandits', group: { key: 'bandits', name: 'Bandits', units: armyFromPower(power, tier, 'balanced'), stats: (u) => enemyUnitStats(u, tier) }, towers: walls };
+  return { team: 'B', kind: 'bandits', group: { key: 'bandits', name: 'Bandits', hex, units: armyFromPower(power, tier, 'balanced'), stats: (u) => enemyUnitStats(u, tier) }, towers: walls };
 }
 
 /* ---------- player order arrivals ---------- */
@@ -370,7 +372,7 @@ function assaultCapital(d, k) {
 function neighborsFree(at, cap) { if (WG.dist(at, cap) > 2) return at; return WG.within(cap, 5).filter((n) => isPassable(n) && WG.dist(n, cap) >= 4).sort((a, b) => WG.dist(a, at) - WG.dist(b, at))[0] ?? at; }
 function skirmish(d, k, hex) {
   const T = teamOfKingdom(k), g = k.power * 0.12 + 30 * k.hall;
-  const local = { team: T, kind: 'local', group: { key: 'local', name: `${k.name} militia`, units: armyFromPower(g, k.hall, k.personality), stats: (u) => enemyUnitStats(u, k.hall) } };
+  const local = { team: T, kind: 'local', group: { key: 'local', name: `${k.name} militia`, hex, units: armyFromPower(g, k.hall, k.personality), stats: (u) => enemyUnitStats(u, k.hall) } };
   gatherBattle(hex, ['P', T], { kind: 'land', title: `🏳️ ${d.name} invades ${k.name}'s land`, extra: [local], holder: T,
     onEnd: (r, lost) => {
       k.relation -= 10; k.power = Math.max(60, k.power - g * 0.5);
@@ -391,7 +393,7 @@ function arriveFleet(fl, o, f) {
     report(`⚓ ${fl.name} salvaged the wreck: ${costText(loot)}. ${bonusDrop(f.tier)}`, 'good');
   } else if (o.type === 'cove' && f && f.type === 'cove' && !f.destroyed) {
     const coveGuns = [{ type: 'cannon', level: 3, hex: fl.at }, { type: 'tower', level: 3, hex: WG.neighbors(fl.at)[0] ?? fl.at }];
-    const cove = { team: 'X', kind: 'cove', group: { key: 'cove', name: 'Pirate cove', units: fleetFromPower(f.power, 3), stats: (t) => enemyShipStats(t, 3) }, towers: coveGuns };
+    const cove = { team: 'X', kind: 'cove', group: { key: 'cove', name: 'Pirate cove', hex: fl.at, units: fleetFromPower(f.power, 3), stats: (t) => enemyShipStats(t, 3) }, towers: coveGuns };
     gatherBattle(fl.at, ['P', 'X'], { kind: 'naval', title: `🏴‍☠️ ${fl.name} attacks the pirate cove`, extra: [cove], holder: 'X',
       onEnd: (r, lost) => {
         if (r.win) { f.destroyed = true; featChanged(); const loot = lootTier(3, 1.6); gain(loot, true); report(`🏴‍☠️ The pirate cove burns! Treasure: ${costText(loot)}. ${bonusDrop(3)}`, 'good', lost); }
@@ -400,7 +402,7 @@ function arriveFleet(fl, o, f) {
   } else if (o.type === 'blockade') {
     const k = S.kingdoms[o.kid], T = teamOfKingdom(k);
     provoke(k);
-    const navy = { team: T, kind: 'knavy', k, group: { key: 'knavy', name: `${k.name} home fleet`, units: fleetFromPower(Math.max(40, k.navy), k.hall), stats: (t) => enemyShipStats(t, k.hall) }, towers: aiCity(k).buildings.filter((b) => DEF_TYPES.includes(b.type) && WG.dist(b.hex, fl.at) <= 3).map((b) => ({ type: b.type, level: b.level, hex: b.hex })) };
+    const navy = { team: T, kind: 'knavy', k, group: { key: 'knavy', name: `${k.name} home fleet`, hex: fl.at, units: fleetFromPower(Math.max(40, k.navy), k.hall), stats: (t) => enemyShipStats(t, k.hall) }, towers: aiCity(k).buildings.filter((b) => DEF_TYPES.includes(b.type) && WG.dist(b.hex, fl.at) <= 3).map((b) => ({ type: b.type, level: b.level, hex: b.hex })) };
     gatherBattle(fl.at, ['P', T], { kind: 'naval', title: `⚓ ${fl.name} blockades ${k.name}`, extra: [navy], holder: T,
       onEnd: (r, lost) => {
         const left = (r.teams[T] || { groups: [] }).groups.find((g) => g.key === 'knavy');

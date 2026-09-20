@@ -6,7 +6,7 @@
   <title>Ironcrown — Kingdom Strategy</title>
   <meta name="description" content="Build a kingdom on a hex world, research technologies, command divisions and fleets in on-map battles, explore ruins and conquer rival realms. Runs in your browser." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👑</text></svg>" />
-  <link rel="stylesheet" href="style.css?v=3.4.0" />
+  <link rel="stylesheet" href="style.css?v=3.4.1" />
 </head>
 <body>
   <div id="app">
@@ -22,6 +22,7 @@
         <span class="chip" title="Ships (all)">⚓ <b id="fleet-cap">0</b></span>
         <span class="chip" title="Total power">⚡ <b id="power">0</b></span>
         <span class="chip" id="shield-chip" hidden title="Peace shield active">🕊️ <b id="shield-time"></b></span>
+        <span class="chip" id="fps-chip" hidden title="Frames per second (Settings → Show frame rate)">🎞️ <b id="fps-label">60</b></span>
         <span class="chip sync" id="sync" title="Save status">💾 <b id="sync-label">local</b></span>
         <button class="icon-btn" data-action="help" title="Help (H)">?</button>
         <button class="icon-btn" data-action="settings" title="Settings">⚙️</button>
@@ -75,23 +76,23 @@
   <div id="toasts"></div>
 
   <!-- Game scripts (classic scripts sharing one global scope; order matters) -->
-  <script src="js/data.js?v=3.4.0"></script>
-  <script src="js/util.js?v=3.4.0"></script>
-  <script src="js/state.js?v=3.4.0"></script>
-  <script src="js/economy.js?v=3.4.0"></script>
-  <script src="js/military.js?v=3.4.0"></script>
-  <script src="js/research.js?v=3.4.0"></script>
-  <script src="js/world.js?v=3.4.0"></script>
-  <script src="js/sim.js?v=3.4.0"></script>
-  <script src="js/alliances.js?v=3.4.0"></script>
-  <script src="js/battle.js?v=3.4.0"></script>
-  <script src="js/render-common.js?v=3.4.0"></script>
-  <script src="js/gfx.js?v=3.4.0"></script>
-  <script src="js/render-city.js?v=3.4.0"></script>
-  <script src="js/render-world.js?v=3.4.0"></script>
-  <script src="js/help.js?v=3.4.0"></script>
-  <script src="js/ui-panels.js?v=3.4.0"></script>
-  <script src="js/ui-actions.js?v=3.4.0"></script>
-  <script src="js/main.js?v=3.4.0"></script>
+  <script src="js/data.js?v=3.4.1"></script>
+  <script src="js/util.js?v=3.4.1"></script>
+  <script src="js/state.js?v=3.4.1"></script>
+  <script src="js/economy.js?v=3.4.1"></script>
+  <script src="js/military.js?v=3.4.1"></script>
+  <script src="js/research.js?v=3.4.1"></script>
+  <script src="js/world.js?v=3.4.1"></script>
+  <script src="js/sim.js?v=3.4.1"></script>
+  <script src="js/alliances.js?v=3.4.1"></script>
+  <script src="js/battle.js?v=3.4.1"></script>
+  <script src="js/render-common.js?v=3.4.1"></script>
+  <script src="js/gfx.js?v=3.4.1"></script>
+  <script src="js/render-city.js?v=3.4.1"></script>
+  <script src="js/render-world.js?v=3.4.1"></script>
+  <script src="js/help.js?v=3.4.1"></script>
+  <script src="js/ui-panels.js?v=3.4.1"></script>
+  <script src="js/ui-actions.js?v=3.4.1"></script>
+  <script src="js/main.js?v=3.4.1"></script>
 </body>
 </html>

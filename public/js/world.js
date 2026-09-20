@@ -165,10 +165,13 @@ const visionBonus = () => R('cartography');
 let landVersion = 0, featVersion = 0;
 function ownedChanged() { worldVersion++; landVersion++; }
 function featChanged() { featVersion++; }
-let tileCount = null, tileCountVer = -1;
+let tileCount = null, tileCountVer = -1, tileCountLand = -1, tileCountAt = -1e9;
 function tileCounts() {
-  if (tileCountVer === worldVersion && tileCount) return tileCount;
-  tileCountVer = worldVersion;
+  // Your own count is always exact. Thirty kingdoms nibbling at their borders
+  // bump worldVersion dozens of times per AI turn, and a second of staleness on
+  // *their* tallies is far cheaper than re-sweeping the map that often.
+  if (tileCount && tileCountLand === landVersion && (tileCountVer === worldVersion || performance.now() - tileCountAt < 1000)) return tileCount;
+  tileCountVer = worldVersion; tileCountLand = landVersion; tileCountAt = performance.now();
   const owner = S.world.owner, m = new Map();
   for (let i = 0; i < owner.length; i++) { const o = owner[i]; if (o !== -1) m.set(o, (m.get(o) || 0) + 1); }
   tileCount = m;
@@ -178,6 +181,14 @@ const playerTiles = () => tileCounts().get(-2) || 0;
 const kingdomTiles = (id) => tileCounts().get(id) || 0;
 // The list of hexes you own, so callers can walk your realm instead of the world.
 let ownedList = null, ownedListVer = -1;
+// The hexes that carry a feature — a few hundred, instead of sweeping the map.
+let featList = null, featListKey = '';
+function featureHexes() {
+  const key = S.seed + ':' + Object.keys(S.world.feat).length;
+  if (featList && featListKey === key) return featList;
+  featListKey = key;
+  return (featList = Object.keys(S.world.feat).map(Number));
+}
 function playerLand() {
   if (ownedListVer === landVersion && ownedList) return ownedList;
   ownedListVer = landVersion;
