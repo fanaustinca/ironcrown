@@ -117,9 +117,20 @@ function aiCity(k) {
   return c;
 }
 
+// Which hexes carry one of your buildings. Rebuilt when the list changes, not
+// once per frame — on a slow machine those allocations are not free.
+let builtSet = null, builtSetLen = -1, builtSetId = -1;
+function builtHexes() {
+  const last = S.buildings.length ? S.buildings[S.buildings.length - 1].id : -1;
+  if (builtSet && builtSetLen === S.buildings.length && builtSetId === last) return builtSet;
+  builtSetLen = S.buildings.length; builtSetId = last;
+  builtSet = new Set();
+  for (const b of S.buildings) builtSet.add(b.hex);
+  return builtSet;
+}
 function drawCityLayer(g, t, dt, vis, inView) {
   const z = CAM.z, cap = S.world.capital, detail = z >= DETAIL_Z;
-  const built = new Set(S.buildings.map((b) => b.hex));
+  const built = builtHexes();
   // plazas
   let cobble = null;               // one pattern for every plaza, not one per hex
   const plaza = (c) => {
@@ -157,9 +168,11 @@ function drawCityLayer(g, t, dt, vis, inView) {
   for (const k of S.kingdoms) if (isSeen(k.capital)) for (const b of aiCity(k).buildings) if (shown(b)) list.push(b);
   list.sort((a, b) => WG.cy[a.hex] - WG.cy[b.hex]);
   if (detail) {
-    // A whole metropolis on screen gets its (still fully detailed) cached art;
-    // a normal view gets the live, animated version.
-    const liveArt = z >= ART_LIVE_Z && GOV.level < 1 && list.length <= 140;
+    /* Live art is what makes windmills turn and forges smoke; it is also the most
+       expensive thing on screen. It is a High-graphics luxury, it stops when a
+       whole metropolis is in view, and the governor can switch it off. Classic
+       and Low-poly always use the (identical, just static) cached sprites. */
+    const liveArt = SETTINGS.graphics === 'high' && z >= ART_LIVE_Z && GOV.level < 1 && list.length <= 140;
     if (liveArt) for (const b of list) drawOnHex(g, b, t);
     else {
       const ppu = clamp(Math.ceil(ART * z * DPR * 1.35 * 4) / 4, 0.5, 2);   // quantised, so the cache actually hits

@@ -31,7 +31,28 @@ function recountSeen() {
   let n = 0;
   for (let i = 0; i < seen.length; i++) if (seen[i]) n++;
   seenCount = n;
+  unseenBox = null; unseenBoxAt = -1e9;
   fogDirty = true;
+}
+/* The rectangle that still holds fog. Looking at the middle of a realm you
+   scouted long ago should not cost a screen-sized blit of nothing. */
+let unseenBox = null, unseenBoxAt = -1e9;
+function unseenBounds() {
+  // Recomputed at most every second and a half. Exploring only ever shrinks the
+  // box, so a stale one is a superset and never hides fog that should be drawn.
+  if (unseenBox !== null && performance.now() - unseenBoxAt < 1500) return unseenBox;
+  unseenBoxAt = performance.now();
+  const seen = S.world.seen;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < seen.length; i++) {
+    if (seen[i]) continue;
+    const x = WG.cx[i], y = WG.cy[i];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const pad = W_HEX * 3;
+  unseenBox = x1 < x0 ? false : { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+  return unseenBox;
 }
 let worldVersion = 0;
 

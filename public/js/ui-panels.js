@@ -142,10 +142,12 @@ function renderBattleHud() {
 }
 
 /* ---------- panel ---------- */
+const PANEL_TABS = ['info', 'map', 'research', 'army', 'navy', 'generals', 'shop', 'alliance', 'log'];
 function renderPanel(force) {
   if (!S) return;
   if (!force && (UI.pointerDown || (document.activeElement && el('panel').contains(document.activeElement) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)))) return;
   const fn = { info: renderInfo, map: renderWorldInfo, research: renderResearch, army: renderArmy, navy: renderNavy, generals: renderGenerals, shop: renderShop, alliance: renderAlliance, log: renderLog }[UI.tab];
+  if (!fn) { UI.tab = 'info'; return renderPanel(force); }      // an unknown tab must never wedge the panel
   const html = fn();
   if (html !== UI.lastPanelHtml) {
     const body = el('panel-body'), scroll = body.scrollTop;
@@ -196,7 +198,10 @@ function renderBuildList() {
 }
 function hallUnlocks(level) {
   const out = [];
-  for (const t of BUILD_ORDER) { const a = limitOf(t, level - 1), bb = limitOf(t, level); if (bb > a) out.push(`${BUILDINGS[t].icon} ${BUILDINGS[t].name} ${a === 0 ? '(new!)' : `${a}→${bb}`}`); }
+  // Only genuinely new buildings. There are no build-count limits, so promising
+  // "Farm 2→3" on the next level was telling the player about a cap that does
+  // not exist.
+  for (const t of BUILD_ORDER) if (limitOf(t, level - 1) === 0 && limitOf(t, level) > 0) out.push(`${BUILDINGS[t].icon} ${BUILDINGS[t].name}`);
   return out;
 }
 function renderBuildingInfo(b) {
@@ -216,7 +221,7 @@ function renderBuildingInfo(b) {
   {
     const err = upgradeError(b);
     h += `<h3>Upgrade to level ${b.level + 1}</h3><div class="card"><div class="row wrap">${costHtml(costFor(b.type, b.level + 1), S.res)}<span class="small muted">⏱ ${fmtTime(buildTime(b.type, b.level + 1))}</span></div>
-      ${b.type === 'hall' ? `<div class="small muted" style="margin-top:6px">Unlocks: ${hallUnlocks(b.level + 1).join(' · ') || 'more of every building'}; a wider settling reach, more storage${(b.level + 1) % 2 ? ' & a builder' : ''}. Land itself is claimed, never granted.</div>` : ''}
+      ${b.type === 'hall' ? `<div class="small muted" style="margin-top:6px">Level ${b.level + 1}: ${hallUnlocks(b.level + 1).length ? 'unlocks ' + hallUnlocks(b.level + 1).join(' · ') + '; ' : ''}a higher level cap for every other building, a wider settling reach, more storage${(b.level + 1) % 2 ? ' and another builder' : ''}. Land itself is claimed, never granted.</div>` : ''}
       <div style="margin-top:8px">${btn('⬆ Upgrade', 'upgrade', b.id, { disabled: !!err, title: err || '', cls: 'block' })}</div>
       ${err ? `<div class="small muted" style="margin-top:4px">${esc(err)}</div>` : ''}</div>`;
   }

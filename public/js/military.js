@@ -246,6 +246,7 @@ function createDivision(name, units, gid) {
 }
 const atHome = (d) => d.at === S.world.capital && !d.path.length;
 function disbandDivision(d) {
+  if (!d) return;
   if (!atHome(d)) { toast('Divisions can only disband at the capital', 'bad'); return; }
   for (const u of Object.keys(d.units)) S.army[u] += d.units[u];
   d.general = null;
@@ -255,6 +256,7 @@ function disbandDivision(d) {
   UI.panelDirty = true;
 }
 function reinforceDivision(d, units) {
+  if (!d) return;
   if (!atHome(d)) { toast('Reinforce divisions at the capital', 'bad'); return; }
   for (const u of Object.keys(units)) { const n = Math.min(units[u], S.army[u]); S.army[u] -= n; d.units[u] += n; }
   UI.panelDirty = true;
@@ -262,6 +264,7 @@ function reinforceDivision(d, units) {
 /* ---- Changing a division's size ---- */
 // At the capital: set exact troop numbers (the difference moves to/from the garrison).
 function setDivisionTroops(d, target) {
+  if (!d) return false;
   if (!atHome(d)) { toast('Troops can be added or removed at the capital — or split/merge divisions in the field', 'bad'); return false; }
   const next = {};
   for (const u of Object.keys(UNITS)) { if (u === 'seaman') continue; next[u] = clamp(Math.floor(target[u] ?? d.units[u] ?? 0), 0, (d.units[u] || 0) + (S.army[u] || 0)); }
@@ -272,6 +275,7 @@ function setDivisionTroops(d, target) {
 }
 // Anywhere: split part of a division off into a new one (needs an idle general).
 function splitDivision(d, units, name, gid) {
+  if (!d) return null;
   if (d.status === 'fighting') return null;
   if (S.divisions.length >= divisionLimit()) { toast(`Division limit (${divisionLimit()})`, 'bad'); return null; }
   if (!gid || generalPost(gid).kind !== 'none') { toast('The new division needs its own idle general', 'bad'); return null; }
@@ -289,6 +293,7 @@ function splitDivision(d, units, name, gid) {
 }
 // Two divisions on the same hex become one; the absorbed one's general is freed.
 function mergeDivisions(into, from) {
+  if (!into || !from) return false;
   if (into === from || into.at !== from.at || into.path.length || from.path.length) { toast('Both divisions must be standing on the same hex', 'bad'); return false; }
   for (const u of Object.keys(from.units)) into.units[u] = (into.units[u] || 0) + from.units[u];
   from.general = null;
@@ -315,6 +320,7 @@ function createFleet(name, ships, gid) {
 }
 const fleetHome = (f) => !f.path.length && (f.at === S.world.harbor || dockAt(f.at) >= 0);
 function disbandFleet(f) {
+  if (!f) return;
   if (!fleetHome(f)) { toast('Fleets can only disband in the home harbor', 'bad'); return; }
   for (const t of SHIP_TYPES) S.harbor[t] += f.ships[t];
   S.fleets = S.fleets.filter((x) => x !== f);

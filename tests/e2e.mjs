@@ -173,12 +173,17 @@ await test('clear trees/rocks from a hex', async () => {
     const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
     const mine = playerLand().filter((i) => inLand(i) && obstacleAt(i) && !buildingAt(i)).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
     if (mine !== undefined) return mine;
-    // nothing overgrown inside the borders yet — settle a wooded hex just outside
-    window.ironcrown.debug.give({ gold: 4000, food: 4000 });
-    const near = W.within(s.world.capital, 10).filter((i) => s.world.owner[i] === -1 && canSettle(i) && !s.world.feat[i]
-      && [3, 4].includes(s.world.terrain[i])).sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
-    if (near == null) return undefined;
-    claimTile(near, 1);
+    // nothing overgrown inside the borders yet — settle some rough ground outside
+    window.ironcrown.debug.give({ gold: 40000, food: 40000 });
+    for (let r = 6; r <= 24; r += 6) {
+      const near = W.within(s.world.capital, r).filter((i) => s.world.owner[i] === -1 && canSettle(i) && !s.world.feat[i] && obstacleAt(i))
+        .sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
+      if (near != null) { claimTile(near, 1); break; }
+      const any = W.within(s.world.capital, r).filter((i) => s.world.owner[i] === -1 && canSettle(i) && !s.world.feat[i] && buildableTerrain(i))
+        .sort((a, b) => W.dist(a, s.world.capital) - W.dist(b, s.world.capital))[0];
+      if (any != null) claimTile(any, 3);
+      if (playerLand().some((i) => inLand(i) && obstacleAt(i) && !buildingAt(i))) break;
+    }
     return playerLand().filter((i) => inLand(i) && obstacleAt(i) && !buildingAt(i))[0];
   });
   assert(hex !== undefined, 'an obstacle exists on the land');
@@ -432,19 +437,26 @@ await test('battle is fought on the map with formations and stances', async () =
   assert(await page.isHidden('#modal'), 'no separate battle screen');
   await page.waitForSelector('#battle-hud:not([hidden])');
   assert(await page.isVisible('#battle-hud'), 'command bar visible');
-  // the HUD ticks every second, so drive the controls through the DOM handler
-  await page.$eval('[data-action="b-form"][data-arg$=":wedge"]', (b) => b.click());
+  // Pause first: the bar keeps ticking while Playwright talks to the page, and a
+  // squad that dies between render and click legitimately takes no orders.
+  await G(() => { setSpeed(0); renderBattleHud(); });
+  const bidClicked = await page.$eval('[data-action="b-form"][data-arg$=":wedge"]', (b) => { b.click(); return +b.dataset.arg.split(':')[0]; });
   await page.$eval('[data-action="b-stance"][data-arg$=":charge"]', (b) => b.click());
-  const g = await G(() => {
-    const b = window.ironcrown.Battles.list[0], pti = window.ironcrown.Battles.playerTeam(b);
+  const g = await G((id) => {
+    // another fight can start while Playwright is talking to the page, so check
+    // the battle the buttons actually belonged to
+    const b = window.ironcrown.Battles.get(id) || window.ironcrown.Battles.list[0];
+    const pti = window.ironcrown.Battles.playerTeam(b);
     const mine = b.groups.filter((G2) => G2.team === pti && !G2.ally);
     return { f: mine.some((G2) => G2.formation === 'wedge'), s: mine.some((G2) => G2.stance === 'charge'), n: mine.length };
-  });
+  }, bidClicked);
   assert(g.f && g.s, `formation & stance changed mid-battle (${g.n} of your groups)`);
+  await G(() => setSpeed(1));
   await page.waitForTimeout(1500);
   await shot('09-battle-on-map');
   const bid = await G(() => window.ironcrown.Battles.focus);
-  await page.click('[data-action="b-resolve"]', { force: true });   // the HUD ticks every second
+  // the fight may already have ended on its own, in which case the bar is gone
+  await page.$eval('[data-action="b-resolve"]', (b) => b.click()).catch(() => {});
   const s = await state();
   assert(s.stats.battlesWon + s.stats.battlesLost >= 1, 'battle recorded');
   await page.waitForTimeout(3500);
@@ -981,6 +993,59 @@ await test('a fully explored map stops paying for fog, across reloads', async ()
   assert(r.built <= 1, `and the fog layer is no longer rebuilt or blitted every frame (${r.built})`);
 });
 
+await test('the interface survives buttons that outlived what they point at', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state, out = [];
+    const before = s.divisions.length;
+    // ids that no longer exist: a division wiped out in battle, a kingdom gone,
+    // a force merged away — every one of these is reachable from a stale panel
+    const dead = ['split', 'reinforce', 'disband', 'split-yes', 'reinforce-yes', 'edit-troops', 'toggle-guard'];
+    for (const a of dead) { try { ACTIONS[a] && ACTIONS[a]('no-such-division'); } catch (e) { out.push(a + ': ' + e.message); } }
+    for (const a of ['rename-entity', 'rename-entity-yes', 'return', 'select-entity', 'focus-entity']) {
+      try { ACTIONS[a] && ACTIONS[a]('division:gone'); } catch (e) { out.push(a + ': ' + e.message); }
+    }
+    try { ACTIONS.merge('gone:alsogone'); } catch (e) { out.push('merge: ' + e.message); }
+    try { ACTIONS.diplo('gift:999'); } catch (e) { out.push('diplo: ' + e.message); }
+    try { ACTIONS['disband-fleet']('nope'); } catch (e) { out.push('disband-fleet: ' + e.message); }
+    try { ACTIONS['b-form']('999:0:wedge'); ACTIONS['b-stance']('999:0:charge'); } catch (e) { out.push('battle: ' + e.message); }
+    try { ACTIONS.claim('not-a-hex'); } catch (e) { out.push('claim: ' + e.message); }
+    // and a tab that does not exist must not wedge the panel for good
+    setTab('nonsense');
+    let panelOk = true;
+    try { renderPanel(true); } catch { panelOk = false; }
+    setTab('info');
+    return { threw: out, panelOk, tab: UI.tab, divisions: s.divisions.length, before };
+  });
+  assert(!r.threw.length, `stale ids are handled, not thrown at: ${r.threw.join('; ')}`);
+  assert(r.panelOk && r.tab === 'info', 'an unknown tab falls back instead of breaking every render');
+  assert(r.divisions === r.before, 'and nothing real was destroyed on the way');
+});
+
+await test('a hundred armies do not cost more than a handful', async () => {
+  const r = await G(() => {
+    const s = window.ironcrown.state, W = window.ironcrown.debug.WG;
+    const keep = s.aiArmies;
+    const k = s.kingdoms[0];
+    const make = (n) => {
+      const out = [];
+      for (let i = 0; i < n; i++) out.push({ id: 'perf' + i, kid: k.id, kind: 'war', units: { swordsman: 20, archer: 0, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 },
+        hall: 1, at: W.within(k.capital, 60)[(i * 13) % 600] ?? k.capital, path: [], prog: 0, status: 'idle', cooldown: 0 });
+      return out;
+    };
+    const bench = (n) => { s.aiArmies = make(n); const t0 = performance.now(); for (let i = 0; i < 60; i++) checkEncounters(true); return (performance.now() - t0) / 60; };
+    const few = bench(10), many = bench(200);
+    // an army with nobody in it is not an army
+    s.aiArmies = make(6).map((a) => ({ ...a, units: { swordsman: 0, archer: 0, pikeman: 0, horseman: 0, catapult: 0, scout: 0, seaman: 0 } }));
+    checkEncounters(true);
+    const emptiesLeft = s.aiArmies.length;
+    s.aiArmies = keep;
+    return { few: +few.toFixed(3), many: +many.toFixed(3), emptiesLeft };
+  });
+  // twenty times the armies used to mean four hundred times the pair checks
+  assert(r.many < r.few * 12 + 0.6, `encounter checks scale with the map, not with every pair (${r.few}ms for 10 vs ${r.many}ms for 200)`);
+  assert(r.emptiesLeft === 0, `armies with no soldiers left are cleared away (${r.emptiesLeft} remained)`);
+});
+
 await test('assets are version-stamped so updates never mix old and new files', async () => {
   const srcs = await page.$$eval('script[src]', (els) => els.map((e) => e.getAttribute('src')));
   const v = await G(() => window.ironcrown.version);
@@ -1093,8 +1158,15 @@ await test('alliance: found, donate, chat, leave, join', async () => {
   await page.click('[data-action="chat-send"]');
   assert((await page.textContent('#chat')).includes('Hello allies!'), 'chat works');
   await page.click('[data-action="leave"]');
-  const target = await G(() => { const s = window.ironcrown.state; return s.alliances.find((a) => a.open && a.minHall <= 6 && a.members.every((m) => m === 'P' || !s.kingdoms[m].atWar))?.id; });
-  assert(target, 'an open alliance without enemies exists');
+  const target = await G(() => {
+    const s = window.ironcrown.state;
+    const open = s.alliances.filter((a) => a.open && a.minHall <= 6);
+    const a = open.find((x) => x.members.every((m) => m === 'P' || !s.kingdoms[m].atWar)) || open[0];
+    // earlier tests leave wars lying about; a player would simply make peace first
+    if (a) a.members.forEach((m) => { if (m !== 'P') { s.kingdoms[m].atWar = false; s.kingdoms[m].relation = Math.max(s.kingdoms[m].relation, 0); } });
+    return a && a.id;
+  });
+  assert(target, 'an open alliance exists to join');
   await page.click(`[data-action="join"][data-arg="${target}"]`);
   assert((await state()).allianceId === target, 'joined an existing alliance');
 });

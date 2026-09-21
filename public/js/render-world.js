@@ -198,8 +198,14 @@ function fogCloudTexture() {
 }
 function drawFog(g) {
   // Once the whole world is explored the fog layer is entirely transparent, and
-  // blitting it across the screen every frame buys nothing at all.
+  // blitting it across the screen every frame buys nothing at all. The same goes
+  // for looking at the middle of a realm you long ago finished scouting.
   if (seenCount >= WG.N) { if (!fogMask) fogLayer(); return; }
+  const bb = unseenBounds();
+  if (bb) {
+    const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
+    if (bb.x1 < x0 || bb.x0 > x1 || bb.y1 < y0 || bb.y0 > y1) { fogLayer(); return; }
+  }
   const hw = W_HEX * SQ3, img = fogLayer();
   const sx = (hw / 2) / FOG_UP, sy = (W_HEX * 1.5) / FOG_UP, oy = W_HEX * 0.25;   // map units per fog pixel
   const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
@@ -289,7 +295,7 @@ function ownerBitmap() {
 }
 /* ---- zoomed-in LOD: terrain cached in map tiles ("chunks"), rebuilt only when they change ----
    The coarse tier covers the mid zooms the old whole-world bitmap used to. */
-const LODS = [{ maxZ: 0.95, S: 0.55, size: 320 }, { maxZ: LIVE_Z, S: 1.3, size: 224 }, { maxZ: 3.2, S: 2.5, size: 128 }, { maxZ: Infinity, S: 6, size: 96 }];
+const LODS = [{ maxZ: 0.95, S: 0.55, size: 320 }, { maxZ: LIVE_Z, S: 1.3, size: 224 }, { maxZ: 3.2, S: 2.5, size: 128 }, { maxZ: 6, S: 4.2, size: 96 }, { maxZ: Infinity, S: 7, size: 72 }];
 const CHUNK_BUDGET_MS = 4;          // time per frame spent building new tiles
 const CHUNK_SLACK = 1.7;            // cache this much more than the screen needs, never less
 /* Cached tiles are canvases, and on a GPU-backed browser every one of them is a
@@ -298,6 +304,7 @@ const CHUNK_SLACK = 1.7;            // cache this much more than the screen need
    card busy doing nothing useful, so the whole cache lives on a pixel budget. */
 const CHUNK_PIXEL_BUDGET = 13e6;    // ≈52 MB of canvas across every level of detail
 let chunkPixels = 0, chunkCost = 4;    // rolling estimate of what one tile costs, in ms
+const chunkWant = [];                  // reused each frame; this runs sixty times a second
 function trimChunks(activeCache, cap) {
   while (activeCache.size > cap) evictChunk(activeCache);
   if (chunkPixels <= CHUNK_PIXEL_BUDGET) return;
@@ -355,7 +362,8 @@ function drawChunks(g, z, occupied) {
   }
   const [x0, y0] = CAM.toWorld(0, 0), [x1, y1] = CAM.toWorld(CW, CH);
   const cx0 = Math.floor(x0 / L.size), cx1 = Math.floor(x1 / L.size), cy0 = Math.floor(y0 / L.size), cy1 = Math.floor(y1 / L.size);
-  const want = [];
+  const want = chunkWant;
+  want.length = 0;
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) want.push([cx, cy, Math.hypot(cx - (cx0 + cx1) / 2, cy - (cy0 + cy1) / 2)]);
   want.sort((a, b) => a[2] - b[2]);
   // The cache must always hold more than one screenful, or every frame evicts a
@@ -396,21 +404,34 @@ function ownedByOwner() {
   for (let i = 0; i < owner.length; i++) { const o = owner[i]; if (o === -1) continue; let l = m.get(o); if (!l) m.set(o, (l = [])); l.push(i); }
   return (ownedGroups = m);
 }
-/* Borders as cached Path2D shapes. Rebuilding thousands of hex outlines every
-   frame was one of the larger costs in a big empire; now it happens only when
-   the map actually changes (and at most twice a second). */
-let terrPaths = null, terrPathsVer = -2;
-function territoryPaths() {
-  if (terrPaths && terrPathsVer === ownedGroupsVer) return terrPaths;
+/* Borders as cached Path2D shapes, covering the region around the camera rather
+   than the whole world: filling a path with every claimed hex on a 165,000-hex
+   map costs real time even where it is off screen. The region is snapped to a
+   coarse grid so ordinary panning reuses the same paths. */
+const TERR_REGION = 900;            // map units of slack around the view
+let terrPaths = null, terrPathsVer = -2, terrPathsKey = '';
+function territoryPaths(vx0, vy0, vx1, vy1) {
+  const q = TERR_REGION;
+  const rx0 = Math.floor(vx0 / q) * q - q, ry0 = Math.floor(vy0 / q) * q - q;
+  const rx1 = Math.ceil(vx1 / q) * q + q, ry1 = Math.ceil(vy1 / q) * q + q;
+  const key = `${rx0},${ry0},${rx1},${ry1}|${CAM.z < LIVE_Z ? 'b' : 'h'}`;
+  if (terrPaths && terrPathsVer === ownedGroupsVer && terrPathsKey === key) return terrPaths;
   const owner = S.world.owner;
+  const near = (i) => WG.cx[i] >= rx0 && WG.cx[i] <= rx1 && WG.cy[i] >= ry0 && WG.cy[i] <= ry1;
   terrPaths = [];
-  for (const [o, hexes] of ownedByOwner()) {
+  for (const [o, all] of ownedByOwner()) {
+    const hexes = all.filter(near);
+    if (!hexes.length) continue;
     const fill = new Path2D(), line = new Path2D();
+    const blocky = CAM.z < LIVE_Z, bw = W_HEX * SQ3 * 1.02, bh = W_HEX * 1.56;
     for (const i of hexes) {
       const s2 = W_HEX * 1.02, x = WG.cx[i], y = WG.cy[i];
-      fill.moveTo(x + HEX_CORNER[0][0] * s2, y + HEX_CORNER[0][1] * s2);
-      for (let k = 1; k < 6; k++) fill.lineTo(x + HEX_CORNER[k][0] * s2, y + HEX_CORNER[k][1] * s2);
-      fill.closePath();
+      if (blocky) fill.rect(x - bw / 2, y - bh / 2, bw, bh);
+      else {
+        fill.moveTo(x + HEX_CORNER[0][0] * s2, y + HEX_CORNER[0][1] * s2);
+        for (let k = 1; k < 6; k++) fill.lineTo(x + HEX_CORNER[k][0] * s2, y + HEX_CORNER[k][1] * s2);
+        fill.closePath();
+      }
       for (let d = 0; d < 6; d++) {
         const n = WG.nb[i * 6 + d];
         if (n >= 0 && owner[n] === o) continue;
@@ -420,13 +441,13 @@ function territoryPaths() {
     }
     terrPaths.push({ color: o === -2 ? '#f2c14e' : S.kingdoms[o].color, fill, line });
   }
-  terrPathsVer = ownedGroupsVer;
+  terrPathsVer = ownedGroupsVer; terrPathsKey = key;
   return terrPaths;
 }
-function drawTerritory(g, inView, z) {
+function drawTerritory(g, inView, z, vx0, vy0, vx1, vy1) {
   ownedByOwner();                       // refresh the index (throttled) before the paths key off it
   g.lineCap = 'round';
-  for (const P of territoryPaths()) {
+  for (const P of territoryPaths(vx0, vy0, vx1, vy1)) {
     g.fillStyle = P.color + '30'; g.fill(P.fill);
     g.strokeStyle = P.color; g.lineWidth = Math.max(1.6, 2.6 / z); g.stroke(P.line);
   }
@@ -436,12 +457,15 @@ function drawWorld(g, t, dt) {
   const cam = CAM, z = cam.z, { terrain, feat } = S.world;
   const es = clamp(1.3 / z, 0.22, 1.2);   // map icons keep a steady on-screen size
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
-  g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH);
+  // The terrain covers the screen by itself whenever the view is wholly inside
+  // the map, so on those frames the clear is a screenful of wasted fill.
+  const [wx0, wy0] = cam.toWorld(0, 0), [wx1, wy1] = cam.toWorld(CW, CH);
+  if (wx0 < 0 || wy0 < 0 || wx1 > WG.pw || wy1 > WG.ph) { g.fillStyle = DEPTH_COLORS[6]; g.fillRect(0, 0, CW, CH); }
   cam.apply(g);
   if (shakeAmt > 0) { g.translate(rand(-shakeAmt, shakeAmt) / z, rand(-shakeAmt, shakeAmt) / z); shakeAmt *= 0.85; if (shakeAmt < 0.3) shakeAmt = 0; }
   // farOut = too small to see anything per-hex; cheapTerrain = the flat world
   // image instead of streamed tiles, which is also where the governor retreats to.
-  const farOut = z < ATLAS_Z, cheapTerrain = farOut || GOV.level >= 3, live = z >= LIVE_Z && GOV.level < 2;
+  const farOut = z < ATLAS_Z, cheapTerrain = farOut || GOV.level >= 4, live = z >= LIVE_Z && GOV.level < 3;
   const atlasOnly = farOut;
   const vis = live ? cam.visible(1) : [], isLandW = (i) => terrain[i] !== T.WATER;
   const [vx0, vy0] = cam.toWorld(-40, -40), [vx1, vy1] = cam.toWorld(CW + 40, CH + 40);
@@ -468,7 +492,7 @@ function drawWorld(g, t, dt) {
       for (const i of vis) { if (isLandW(i) || hash2(i, 4) < 0.55) continue; const o = Math.sin(t + i * 0.7) * 2, x = WG.cx[i], y = WG.cy[i]; g.moveTo(x - 3 + o, y); g.quadraticCurveTo(x + o, y - 1.2, x + 3 + o, y); }
       g.stroke();
     }
-    drawTerritory(g, inView, z);
+    drawTerritory(g, inView, z, vx0, vy0, vx1, vy1);
   }
   // A few hundred feature hexes, checked against the view — never a sweep of
   // every hex on screen (which is tens of thousands when zoomed out).

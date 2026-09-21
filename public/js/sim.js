@@ -27,9 +27,12 @@ function planPath(ent, goal) {
   if (isFleet(ent)) { const g = nearestWaterTo(goal, ent.at); return g < 0 ? null : findPath(WG, ent.at, g, fleetCost); }
   return findPath(WG, ent.at, goal, divisionCost(ent));
 }
-function giveOrder(ent, type, hex, extra = {}) {
+function giveOrder(ent, type, hex, extra = {}, quiet) {
   const path = planPath(ent, hex);
-  if (path === null) { toast(isScout(ent) ? 'Scouts cannot reach that spot' : isFleet(ent) ? 'No sea route there' : (isWater(hex) ? 'Divisions need transport ships (Cogs) to cross water' : 'No route there — mountains or sea block the way'), 'bad'); return false; }
+  if (path === null) {
+    if (!quiet) toast(isScout(ent) ? 'Scouts cannot reach that spot' : isFleet(ent) ? 'No sea route there' : (isWater(hex) ? 'Divisions need transport ships (Cogs) to cross water' : 'No route there — mountains or sea block the way'), 'bad');
+    return false;
+  }
   ent.path = path; ent.prog = 0; ent.order = { type, hex, ...extra }; ent.status = path.length ? 'moving' : 'idle';
   if (!path.length) arrive(ent);
   UI.panelDirty = true;
@@ -155,7 +158,19 @@ function teamKingdoms(T) {
   return [];
 }
 const kingdomsAtWar = (a, b) => (a.wars && a.wars[b.id] > S.time) || (b.wars && b.wars[a.id] > S.time);
+/* With a hundred-odd armies on the map this is asked thousands of times a tick,
+   and each answer used to rebuild two lists of kingdoms. Memoised for the
+   duration of one encounter sweep. */
+let hostileMemo = new Map();
+const clearHostileMemo = () => hostileMemo.clear();
 function teamsHostile(A, B, ctx) {
+  if (ctx) return teamsHostileRaw(A, B, ctx);
+  const key = A + '\u0000' + B;
+  let v = hostileMemo.get(key);
+  if (v === undefined) { v = teamsHostileRaw(A, B); hostileMemo.set(key, v); }
+  return v;
+}
+function teamsHostileRaw(A, B, ctx) {
   if (A === B) return false;
   if (['X', 'B'].includes(A) || ['X', 'B'].includes(B)) return true;
   if (ctx && ((ctx[0] === A && ctx[1] === B) || (ctx[0] === B && ctx[1] === A))) return true;
@@ -770,16 +785,16 @@ function guardDuty(offline) {
     taken.add(d);
     if (d.order && d.order.type === 'defend' && d.order.hex === t.hex) continue;
     if (d.at === t.hex && !d.path.length) { d.order = { type: 'defend', hex: t.hex }; continue; }
-    if (giveOrder(d, 'defend', t.hex) && !offline && !d.warned) {
-      d.warned = true;
-      log(`🛡️ ${d.name} is marching to defend ${hexName(t.hex)} from ${t.name}.`, 'bad');
-    }
+    if (d.guardFail > S.time) continue;                 // no road to it; do not re-plan every few seconds
+    if (giveOrder(d, 'defend', t.hex, {}, true)) {
+      if (!offline && !d.warned) { d.warned = true; log(`🛡️ ${d.name} is marching to defend ${hexName(t.hex)} from ${t.name}.`, 'bad'); }
+    } else { d.guardFail = S.time + 30; taken.delete(d); }
   }
   for (const d of guards) {                    // no call to answer — go back on post
     if (taken.has(d)) continue;
     d.warned = false;
     if (d.order && d.order.type === 'defend') d.order = null;
-    if (!d.path.length && d.at !== d.guardAt && d.status !== 'fighting') giveOrder(d, 'move', d.guardAt);
+    if (!d.path.length && d.at !== d.guardAt && d.status !== 'fighting') giveOrder(d, 'move', d.guardAt, {}, true);
   }
 }
 
@@ -791,32 +806,50 @@ const DETECT_R = 2, DETECT_R_IDLE = 3;
 const detectRange = (e, idle) => (idle ? DETECT_R_IDLE : DETECT_R) + (e && e.units && e.units.scout > 0 ? 1 : 0);
 const crossing = (a, b) => a.path.length && b.path.length && a.path[0] === b.at && b.path[0] === a.at;
 function checkEncounters(offline) {
+  clearHostileMemo();
+  // An army with nobody left in it is not an army; it should not be drawn, and
+  // it should certainly not keep being dragged towards fights it cannot join.
+  if (S.aiArmies.some((a) => !armyHousing(a.units))) S.aiArmies = S.aiArmies.filter((a) => armyHousing(a.units) > 0 || a.status === 'fighting');
   const land = S.divisions.filter((d) => d.status !== 'fighting' && armyHousing(d.units) > 0 && !onCooldown(d)).map((d) => ({ team: 'P', e: d, zone: !d.path.length }))
-    .concat(S.aiArmies.filter((a) => a.status !== 'fighting' && a.kind !== 'home' && !onCooldown(a)).map((a) => ({ team: teamOfKingdom(S.kingdoms[a.kid]), e: a, zone: a.kind === 'guard' && !a.path.length, raid: a.kind === 'raid' })));
+    .concat(S.aiArmies.filter((a) => a.status !== 'fighting' && a.kind !== 'home' && armyHousing(a.units) > 0 && !onCooldown(a)).map((a) => ({ team: teamOfKingdom(S.kingdoms[a.kid]), e: a, zone: a.kind === 'guard' && !a.path.length, raid: a.kind === 'raid' })));
   // your towers, cannons, spires and fortresses open fire on hostile armies passing within range
   for (const L of land) {
     if (L.team === 'P' || L.e.status === 'fighting' || !(L.raid || teamsHostile(L.team, 'P')) || !(L.e.path.length || L.raid)) continue;
+    if (distToTerritory(L.e.at) > 4) continue;            // nowhere near your walls; do not scan every building
     if (playerTowers(L.e.at).length) fieldBattle(L.e.at, 'P', L.team, `🗼 Your defenses open fire on the ${teamInfo(L.team).name} army`, offline);
   }
-  for (let i = 0; i < land.length; i++) for (let j = i + 1; j < land.length; j++) {
-    const A = land[i], B = land[j];
-    if (A.team === B.team || A.e.status === 'fighting' || B.e.status === 'fighting') continue;
-    const d = WG.dist(A.e.at, B.e.at);
-    const reach = Math.max(detectRange(A.e, A.zone), detectRange(B.e, B.zone));
-    const close = d <= reach || crossing(A.e, B.e);
-    if (!close) continue;
-    const hostile = teamsHostile(A.team, B.team) || ((A.raid || B.raid) && (A.team === 'P' || B.team === 'P'));
-    if (!hostile) continue;
-    const hex = A.e.path && A.e.path.length ? A.e.at : B.e.at;
-    const pl = A.team === 'P' ? A : B.team === 'P' ? B : null;
-    const title = pl ? `⚔️ ${pl.e.name} engages the ${teamInfo(pl === A ? B.team : A.team).name} army` : `⚔️ ${teamInfo(A.team).name} clashes with ${teamInfo(B.team).name}`;
-    fieldBattle(hex, A.team, B.team, title, offline);
+  /* Two hundred armies means twenty thousand pairs if you compare them all, sixty
+     times a second. Bucket them by a coarse cell instead and compare only
+     neighbours: nothing further than a cell away can be inside a detection ring. */
+  const CELL = 8, bucketOf = (i) => (((WG.col(i) / CELL) | 0) + 1) * 4096 + ((WG.row(i) / CELL) | 0);
+  const buckets = new Map();
+  land.forEach((L, idx) => { L.idx = idx; const k = bucketOf(L.e.at); const b = buckets.get(k); if (b) b.push(L); else buckets.set(k, [L]); });
+  for (const A of land) {
+    if (A.e.status === 'fighting') continue;
+    const c = (WG.col(A.e.at) / CELL | 0) + 1, r = WG.row(A.e.at) / CELL | 0;
+    for (let dc = -1; dc <= 1; dc++) for (let dr = -1; dr <= 1; dr++) {
+      const bucket = buckets.get((c + dc) * 4096 + r + dr);
+      if (!bucket) continue;
+      for (const B of bucket) {
+        if (B.idx <= A.idx || A.team === B.team || A.e.status === 'fighting' || B.e.status === 'fighting') continue;
+        const d = WG.dist(A.e.at, B.e.at);
+        const reach = Math.max(detectRange(A.e, A.zone), detectRange(B.e, B.zone));
+        if (!(d <= reach || crossing(A.e, B.e))) continue;
+        const hostile = teamsHostile(A.team, B.team) || ((A.raid || B.raid) && (A.team === 'P' || B.team === 'P'));
+        if (!hostile) continue;
+        const hex = A.e.path && A.e.path.length ? A.e.at : B.e.at;
+        const pl = A.team === 'P' ? A : B.team === 'P' ? B : null;
+        const title = pl ? `⚔️ ${pl.e.name} engages the ${teamInfo(pl === A ? B.team : A.team).name} army` : `⚔️ ${teamInfo(A.team).name} clashes with ${teamInfo(B.team).name}`;
+        fieldBattle(hex, A.team, B.team, title, offline);
+      }
+    }
   }
   const sea = S.fleets.filter((f) => f.status !== 'fighting' && !onCooldown(f)).map((f) => ({ team: 'P', e: f }))
     .concat(S.aiFleets.filter((f) => f.status !== 'fighting' && !onCooldown(f)).map((f) => ({ team: f.owner === 'pirate' ? 'X' : teamOfKingdom(S.kingdoms[f.owner]), e: f })));
   for (let i = 0; i < sea.length; i++) for (let j = i + 1; j < sea.length; j++) {
     const A = sea[i], B = sea[j];
-    if (A.team === B.team || A.e.status === 'fighting' || B.e.status === 'fighting' || WG.dist(A.e.at, B.e.at) > 2 || !teamsHostile(A.team, B.team)) continue;
+    if (A.team === B.team || A.e.status === 'fighting' || B.e.status === 'fighting') continue;
+    if (Math.abs(WG.row(A.e.at) - WG.row(B.e.at)) > 2 || WG.dist(A.e.at, B.e.at) > 2 || !teamsHostile(A.team, B.team)) continue;
     const pl = A.team === 'P' ? A : B.team === 'P' ? B : null;
     gatherBattle(B.e.at, [A.team, B.team], { kind: 'naval', offline, title: pl ? `⚓ ${pl.e.name} engages the ${teamInfo(pl === A ? B.team : A.team).name}` : `⚓ ${teamInfo(A.team).name} and ${teamInfo(B.team).name} clash at sea`,
       onEnd: (r, lost) => {

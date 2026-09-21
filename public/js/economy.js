@@ -19,8 +19,13 @@ const buildableTerrain = (i) => i >= 0 && S.world.terrain[i] !== T.WATER && S.wo
 const isPlaza = (i) => i !== capHex() && WG.dist(i, capHex()) === 1;
 const inLand = (i) => buildableTerrain(i) && S.world.owner[i] === -2;
 const isCoastal = (i) => buildableTerrain(i) && WG.neighbors(i).some((n) => S.world.terrain[n] === T.WATER);
-let KCLEARED = new Set();
-const cleared = (i) => { if (KCLEARED.size !== S.cleared.length) KCLEARED = new Set(S.cleared); return KCLEARED.has(i); };
+let KCLEARED = new Set(), KCLEARED_SRC = null;
+// Keyed on the array itself as well as its length: loading or importing a save
+// swaps `S.cleared` for a different array that may happen to be the same size.
+const cleared = (i) => {
+  if (KCLEARED_SRC !== S.cleared || KCLEARED.size !== S.cleared.length) { KCLEARED = new Set(S.cleared); KCLEARED_SRC = S.cleared; }
+  return KCLEARED.has(i);
+};
 
 // Forests have trees and hills have rocks to clear — except for the building that uses them.
 function obstacleAt(i) {
@@ -46,7 +51,6 @@ function clearObstacle(i) {
   UI.panelDirty = true;
   return true;
 }
-// Upgrading the Main Hall claims every neutral land hex within its radius.
 /* The Main Hall no longer hands you land — territory is earned by claiming it.
    Upgrading still lights up the country around your seat, so you can see what
    there is to settle. `grant` is only used to lay out the starting realm. */

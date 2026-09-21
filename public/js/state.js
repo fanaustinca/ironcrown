@@ -136,7 +136,13 @@ function load() {
     deriveWorld();
     migrate();
     return true;
-  } catch { return false; }
+  } catch (e) {
+    // A save we cannot read is worth saying out loud rather than silently
+    // starting a new realm over the top of it.
+    console.error('save could not be read:', e);
+    UI.badSave = true;
+    return false;
+  }
 }
 
 // Bring older v2 saves up to date (v2.0 → v2.1).

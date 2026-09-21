@@ -15,7 +15,9 @@ function showModal(html, wide) {
 function closeModal() { el('modal').hidden = true; el('modal-card').innerHTML = ''; }
 
 function showWelcome() {
-  const old = UI.oldSave ? `<p class="card small">⚠️ Your previous save was from Ironcrown v${UI.oldSave}, whose world was a tenth of the size of this one — it cannot be carried over. A fresh, far bigger realm awaits!</p>` : '';
+  const old = UI.badSave
+    ? '<p class="card small">⚠️ Your previous save could not be read and has been set aside. Starting a fresh realm.</p>'
+    : UI.oldSave ? `<p class="card small">⚠️ Your previous save was from Ironcrown v${UI.oldSave}, whose world was a tenth of the size of this one — it cannot be carried over. A fresh, far bigger realm awaits!</p>` : '';
   showModal(`<h2 style="font-size:26px">👑 Ironcrown <span class="ver">v${GAME_VERSION}</span></h2>${old}
     <p>Rule a young kingdom in a living world of rival realms, pirates and forgotten ruins.</p>
     <ul class="small muted" style="padding-left:18px">
@@ -122,6 +124,7 @@ function setView(v) {
 }
 function flyToCity() { if (CAM.z < 2.5) { CAM.z = 4.5; CAM.x = WG.cx[S.world.capital]; CAM.y = WG.cy[S.world.capital]; CAM.clamp(); } }
 function setTab(t) {
+  if (!PANEL_TABS.includes(t)) t = 'info';
   UI.tab = t;
   document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   UI.lastPanelHtml = ''; el('panel-body').scrollTop = 0;
@@ -141,7 +144,9 @@ function selectEntity(kind, id) {
 }
 
 /* ---------- actions ---------- */
-const findEnt = (arg) => { const [k, id] = arg.split(':'); return (k === 'division' ? S.divisions : k === 'scout' ? S.scouts : S.fleets).find((e) => e.id === id); };
+const findEnt = (arg) => { const [k, id] = String(arg || '').split(':'); return (k === 'division' ? S.divisions : k === 'scout' ? S.scouts : S.fleets).find((e) => e.id === id); };
+// Reading a field of a modal that may already have closed.
+const inputVal = (id) => { const e = el(id); return e && e.value != null ? String(e.value).trim() : ''; };
 const ACTIONS = {
   place(t) { const l = buildLockReason(t); if (l) return toast(l, 'bad'); flyToCity(); setTab('info'); UI.placing = t; UI.selected = null; updatePlacingHint(); },
   'cancel-place'() { UI.placing = null; updatePlacingHint(); },
@@ -196,7 +201,7 @@ const ACTIONS = {
   'b-tab'(id) { Battles.focus = +id; renderBattleHud(); },
   order(kind) { issueOrder(selectedEntity(), kind, UI.worldSel); },
   return(arg) { const e = findEnt(arg); if (e) giveOrder(e, 'return', isFleet(e) ? S.world.harbor : S.world.capital); },
-  diplo(arg) { const [k, id] = arg.split(':'); DIPLO[k](S.kingdoms[+id]); },
+  diplo(arg) { const [k, id] = arg.split(':'); const kk = S.kingdoms[+id]; if (DIPLO[k] && kk) DIPLO[k](kk); },
   muster() { showMuster(); },
   'muster-yes'() {
     const d = createDivision(el('div-name').value, readSliders('mu'), el('div-general').value || null);
@@ -206,6 +211,7 @@ const ACTIONS = {
   'fleet-yes'() { const f = createFleet(el('fleet-name').value, readSliders('fl'), el('fleet-general').value || null); if (f) { closeModal(); toast(`⚓ ${f.name} formed`, 'good'); } },
   'edit-troops'(id) {
     const d = S.divisions.find((x) => x.id === id);
+    if (!d) return toast('That division is gone', 'bad');
     const pool = {}; for (const u of Object.keys(UNITS)) if (u !== 'seaman' && (d.units[u] || S.army[u])) pool[u] = (d.units[u] || 0) + (S.army[u] || 0);
     showModal(`<h2>🎚️ ${esc(d.name)} — troops</h2><p class="small muted">Drag to set exactly how many of each soldier this division has. Extra soldiers go back to (or come from) the capital garrison.</p>
       ${Object.keys(pool).map((u) => `<div class="row slider-row"><span style="width:26px">${UNITS[u].icon}</span><span style="width:84px">${UNITS[u].name}</span><input type="range" min="0" max="${pool[u]}" value="${d.units[u] || 0}" data-ed="${u}" /><b id="ed-${u}" style="width:70px;text-align:right">${d.units[u] || 0}/${pool[u]}</b></div>`).join('')}
@@ -214,23 +220,25 @@ const ACTIONS = {
   'edit-troops-yes'(id) { if (setDivisionTroops(S.divisions.find((x) => x.id === id), readSliders('ed'))) { closeModal(); toast('Division updated', 'good'); } },
   split(id) {
     const d = S.divisions.find((x) => x.id === id);
+    if (!d) return toast('That division is gone', 'bad');
     showModal(`<h2>✂️ Split ${esc(d.name)}</h2><p class="small muted">Choose which soldiers form the new division. It needs its own general.</p>
       <input type="text" id="split-name" value="${esc(d.name)} II" maxlength="24" />
       ${Object.keys(d.units).filter((u) => d.units[u] > 0).map((u) => `<div class="row slider-row"><span style="width:26px">${UNITS[u].icon}</span><span style="width:84px">${UNITS[u].name}</span><input type="range" min="0" max="${d.units[u]}" value="${Math.floor(d.units[u] / 2)}" data-sp="${u}" /><b id="sp-${u}" style="width:70px;text-align:right">${Math.floor(d.units[u] / 2)}/${d.units[u]}</b></div>`).join('')}
       <h3>General</h3>${generalSelect('split-general')}
       <div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Split', 'split-yes', id, { id: 'split-yes' })}</div>`);
   },
-  'split-yes'(id) { const nd = splitDivision(S.divisions.find((x) => x.id === id), readSliders('sp'), el('split-name').value, el('split-general').value || null); if (nd) { closeModal(); toast(`✂️ ${nd.name} formed`, 'good'); } },
+  'split-yes'(id) { const nd = splitDivision(S.divisions.find((x) => x.id === id), readSliders('sp'), inputVal('split-name'), inputVal('split-general') || null); if (nd) { closeModal(); toast(`✂️ ${nd.name} formed`, 'good'); } },
   merge(arg) { const [a, b] = arg.split(':'); mergeDivisions(S.divisions.find((x) => x.id === a), S.divisions.find((x) => x.id === b)); },
   reinforce(id) {
     const d = S.divisions.find((x) => x.id === id);
+    if (!d) return toast('That division is gone', 'bad');
     showModal(`<h2>➕ Reinforce ${esc(d.name)}</h2>${sliderRows(S.army, UNITS, 'rf', 'none')}<div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Reinforce', 'reinforce-yes', id)}</div>`);
   },
   'reinforce-yes'(id) { reinforceDivision(S.divisions.find((x) => x.id === id), readSliders('rf')); closeModal(); },
   disband(id) { disbandDivision(S.divisions.find((x) => x.id === id)); },
   'disband-fleet'(id) { disbandFleet(S.fleets.find((x) => x.id === id)); },
-  'rename-entity'(arg) { const e = findEnt(arg); showModal(`<h2>Rename</h2><input type="text" id="ent-name" value="${esc(e.name)}" maxlength="24" /><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Save', 'rename-entity-yes', arg)}</div>`); },
-  'rename-entity-yes'(arg) { const e = findEnt(arg), v = el('ent-name').value.trim(); if (v) e.name = v.slice(0, 24); closeModal(); },
+  'rename-entity'(arg) { const e = findEnt(arg); if (!e) return toast('That force is gone', 'bad'); showModal(`<h2>Rename</h2><input type="text" id="ent-name" value="${esc(e.name)}" maxlength="24" /><div class="actions">${btn('Cancel', 'close-modal', '', { cls: 'ghost' })}${btn('Save', 'rename-entity-yes', arg)}</div>`); },
+  'rename-entity-yes'(arg) { const e = findEnt(arg), v = inputVal('ent-name'); if (e && v) e.name = v.slice(0, 24); closeModal(); },
   invite(kid) { inviteKingdom(+kid); },
   kick(kid) { kickMember(+kid); },
   join(id) { joinAlliance(id); },
@@ -240,7 +248,7 @@ const ACTIONS = {
   'chat-send'() { const i = el('chat-input'); playerChat(i.value); i.value = ''; i.blur(); },
   emblem(e) { UI.allianceDraft.emblem = e; },
   color(c) { UI.allianceDraft.color = c; },
-  'create-alliance'() { const d = UI.allianceDraft; d.name = el('alliance-name').value; if (createAlliance(d.name, d.color, d.emblem)) UI.allianceDraft = null; },
+  'create-alliance'() { const d = UI.allianceDraft; if (!d) return; d.name = inputVal('alliance-name'); if (createAlliance(d.name, d.color, d.emblem)) UI.allianceDraft = null; },
   'use-item'(k) { useItem(k); },
   'open-box'(id) { openBox(id); },
   menu() { showMenu(); },
@@ -248,7 +256,7 @@ const ACTIONS = {
   help(section) { showHelp(section); },
   'close-modal'() { closeModal(); },
   begin() { S.name = (el('welcome-name').value || 'Ironcrown').trim().slice(0, 24) || 'Ironcrown'; S.started = true; closeModal(); save(); toast(`Long live ${S.name}!`, 'good'); },
-  rename() { const v = el('rename-input').value.trim().slice(0, 24); if (v) { S.name = v; save(); toast('Kingdom renamed'); } closeModal(); },
+  rename() { const v = inputVal('rename-input').slice(0, 24); if (v) { S.name = v; save(); toast('Kingdom renamed'); } closeModal(); },
   save() { save(); API.push(true); toast('Game saved', 'good'); },
   export() {
     const data = btoa(unescape(encodeURIComponent(serialize(S))));
@@ -292,7 +300,13 @@ const mouse = { x: -1, y: -1, inside: false };
 function bindInput() {
   document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-action]');
-    if (t && !t.disabled && ACTIONS[t.dataset.action]) { ACTIONS[t.dataset.action](t.dataset.arg); UI.panelDirty = true; renderPanel(true); updateHud(); }
+    if (t && !t.disabled && ACTIONS[t.dataset.action]) {
+      // The panel refreshes about once a second while the world keeps moving, so
+      // a button can outlive what it points at. Never let that wedge the click.
+      try { ACTIONS[t.dataset.action](t.dataset.arg); }
+      catch (err) { console.error('action ' + t.dataset.action + ':', err); toast('That is no longer available', 'bad'); }
+      UI.panelDirty = true; renderPanel(true); updateHud();
+    }
     const tab = e.target.closest('[data-tab]'); if (tab) setTab(tab.dataset.tab);
     const sp = e.target.closest('[data-speed]'); if (sp) setSpeed(+sp.dataset.speed);
     if (e.target === el('modal') && S.started) closeModal();
@@ -303,7 +317,7 @@ function bindInput() {
   window.addEventListener('pointerup', () => setTimeout(() => { UI.pointerDown = false; }, 0));
   document.addEventListener('input', (e) => {
     const d = e.target.dataset;
-    for (const p of ['mu', 'fl', 'rf', 'ed', 'sp']) if (d[p] !== undefined) el(`${p}-${d[p]}`).textContent = `${e.target.value}/${e.target.max}`;
+    for (const p of ['mu', 'fl', 'rf', 'ed', 'sp']) if (d[p] !== undefined) { const lbl = el(`${p}-${d[p]}`); if (lbl) lbl.textContent = `${e.target.value}/${e.target.max}`; }
     if (e.target.id === 'alliance-name' && UI.allianceDraft) UI.allianceDraft.name = e.target.value;
   });
   document.addEventListener('change', (e) => {

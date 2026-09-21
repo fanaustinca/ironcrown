@@ -47,9 +47,12 @@ const CAM = new Camera(WG, 0.25, 10);   // one camera for the one map
    fewer pixels, then it drops the detailed tiles for the flat world image. It
    climbs back the moment there is headroom. */
 const GOV = {
-  ms: 16.7, level: 0, busy: false, hold: 0, fps: 60,
-  maxLevel: 3,
-  scale() { return [1, 1, 0.78, 0.62][Math.min(this.level, 3)]; },
+  ms: 16.7, level: 0, busy: false, hold: 0, fps: 60, warned: false,
+  maxLevel: 4,
+  // Level 1 already trims a little resolution: on Classic and Low-poly the
+  // effects it switches off are not drawn anyway, so it would otherwise waste
+  // a step doing nothing on exactly the machines that need help soonest.
+  scale() { return [1, 0.88, 0.75, 0.62, 0.5][Math.min(this.level, 4)]; },
   sample(dt) {
     const ms = Math.min(dt * 1000, 400);
     this.ms += (ms - this.ms) * 0.08;
@@ -60,8 +63,10 @@ const GOV = {
     if (this.hold > 0) return;
     // Recovery has to sit above a vsync-locked 16.7 ms, or a machine running
     // perfectly at 60 fps could never climb back out of a step-down.
-    if (this.ms > 26 && this.level < this.maxLevel) { this.level++; this.hold = 2.5; if (this.level >= 2) resize(); }
-    else if (this.ms < 19 && this.level > 0) { this.level--; this.hold = 4; if (this.level <= 1) resize(); }
+    if (this.ms > 26 && this.level < this.maxLevel) {
+      this.level++; this.hold = 2; resize();
+      if (this.level >= 2 && !this.warned) { this.warned = true; if (typeof toast === 'function') toast('⚙️ Easing the graphics back to keep things smooth — Settings → ⚡ Make it fast for more', ''); }
+    } else if (this.ms < 19 && this.level > 0) { this.level--; this.hold = 4; resize(); }
   },
 };
 // Render resolution: 'sharp' = full device density, 'balanced' = at most 1.25×, 'performance' = 1×.
