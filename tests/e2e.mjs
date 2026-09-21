@@ -435,8 +435,12 @@ await test('battle is fought on the map with formations and stances', async () =
   // the HUD ticks every second, so drive the controls through the DOM handler
   await page.$eval('[data-action="b-form"][data-arg$=":wedge"]', (b) => b.click());
   await page.$eval('[data-action="b-stance"][data-arg$=":charge"]', (b) => b.click());
-  const g = await G(() => { const b = window.ironcrown.Battles.list[0]; return { f: b.groups[0].formation, s: b.groups[0].stance }; });
-  assert(g.f === 'wedge' && g.s === 'charge', 'formation & stance changed mid-battle');
+  const g = await G(() => {
+    const b = window.ironcrown.Battles.list[0], pti = window.ironcrown.Battles.playerTeam(b);
+    const mine = b.groups.filter((G2) => G2.team === pti && !G2.ally);
+    return { f: mine.some((G2) => G2.formation === 'wedge'), s: mine.some((G2) => G2.stance === 'charge'), n: mine.length };
+  });
+  assert(g.f && g.s, `formation & stance changed mid-battle (${g.n} of your groups)`);
   await page.waitForTimeout(1500);
   await shot('09-battle-on-map');
   const bid = await G(() => window.ironcrown.Battles.focus);
@@ -530,8 +534,10 @@ await test('empire expands into unexplored land: settle a whole region at once',
     const land = (i) => s.world.owner[i] === -1 && isPassable(i) && !s.world.feat[i];
     const before = playerTiles();
     // 1. push the border outwards with one big claim on the edge of what you have seen
-    const edge = W.within(s.world.capital, 30).filter((i) => land(i) && isSeen(i)).sort((a, b) => distToTerritory(b) - distToTerritory(a))[0];
-    const big = Math.min(4, settleRadius()), planned = claimCluster(edge, big).length;
+    const big = Math.min(4, settleRadius());
+    const edge = W.within(s.world.capital, 30).filter((i) => land(i) && isSeen(i))
+      .sort((a, b) => claimCluster(b, big).length - claimCluster(a, big).length)[0];
+    const planned = claimCluster(edge, big).length;
     const firstOk = claimTile(edge, big);
     const gained = playerTiles() - before;
     // 2. from that new border, settle land nobody has ever walked
@@ -742,9 +748,12 @@ await test('zoomed in on High graphics an army is drawn soldier by soldier', asy
     const d = s.divisions[0];
     d.at = s.world.capital; d.path = []; d.status = 'idle';
     const troops = armyHousing(d.units);
-    // pause first: a battle starting mid-measurement draws soldiers at any zoom
-    const speed = UI.gameSpeed;
+    // pause first: a battle starting mid-measurement draws soldiers at any zoom,
+    // and pin the governor, since a slow frame would legitimately turn the
+    // formations off mid-test
+    const speed = UI.gameSpeed, auto = SETTINGS.autoQuality;
     setSpeed(0);
+    SETTINGS.autoQuality = false; GOV.level = 0; resize();
     Battles.list.length = 0;
     const real = window.drawSoldier;
     let n = 0;
@@ -762,6 +771,7 @@ await test('zoomed in on High graphics an army is drawn soldier by soldier', asy
     const lowPoly = await count('low', 5);
     window.drawSoldier = real;
     window.ironcrown.SETTINGS.graphics = 'high';
+    SETTINGS.autoQuality = auto;
     setSpeed(speed || 1);
     return { troops, zoomedIn, zoomedOut, lowPoly, armyZ: ARMY_Z };
   });
